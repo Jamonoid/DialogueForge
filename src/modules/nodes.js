@@ -242,6 +242,7 @@ export function setupNodeInteractions(dlg, callbacks) {
       const nodeId = handle.dataset.resizeNode;
       const node = dlg.nodes.find((n) => n.id === nodeId);
       if (!node) return;
+      State.pushUndoCheckpoint();
       resizingNodeId = nodeId;
       // Get actual rendered height
       const nodeEl = $(`.dialogue-node[data-node-id="${nodeId}"]`);

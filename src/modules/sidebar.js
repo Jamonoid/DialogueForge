@@ -170,6 +170,7 @@ function editNPC(id) {
     (vals) => {
       if (!vals.name) return;
       State.updateNPC(id, vals.name);
+      State.notifyChange();
     }
   );
 }
@@ -184,6 +185,7 @@ function editQuest(id) {
     (vals) => {
       if (!vals.name) return;
       State.updateQuest(id, vals.name);
+      State.notifyChange();
     }
   );
 }
@@ -197,6 +199,7 @@ function editDialogue(id) {
     (vals) => {
       if (!vals.title) return;
       State.updateDialogue(id, { title: vals.title });
+      State.notifyChange();
     }
   );
 }

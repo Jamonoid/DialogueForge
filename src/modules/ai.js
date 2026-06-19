@@ -163,6 +163,7 @@ export async function translateAllNodes() {
   const parts = result.split('---').map((p) => p.trim());
   let count = 0;
 
+  State.startBatch();
   for (let i = 0; i < nodesToTranslate.length; i++) {
     const node = nodesToTranslate[i];
     let translated = parts[i] || '';
@@ -175,6 +176,7 @@ export async function translateAllNodes() {
       count++;
     }
   }
+  State.endBatch();
 
   return count;
 }
@@ -494,3 +496,12 @@ async function extractPdfText(file) {
 
 // Init
 loadConfig();
+
+/**
+ * Public API wrapper — used by the Chat module to call the AI
+ * without re-implementing auth logic.
+ */
+export async function callAI(messages, options = {}) {
+  return callOpenRouter(messages, options);
+}
+

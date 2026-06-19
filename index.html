@@ -120,6 +120,20 @@
           </button>
         </div>
 
+        <div class="toolbar-divider"></div>
+
+        <div class="toolbar-group">
+          <button class="toolbar-btn ai-btn" id="btn-chat-toggle" title="Asistente IA (Chat)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              <circle cx="9" cy="10" r="1" fill="currentColor" stroke="none"/>
+              <circle cx="12" cy="10" r="1" fill="currentColor" stroke="none"/>
+              <circle cx="15" cy="10" r="1" fill="currentColor" stroke="none"/>
+            </svg>
+            Chat IA
+          </button>
+        </div>
+
         <div class="toolbar-spacer"></div>
 
         <!-- LANGUAGE TOGGLE -->
@@ -266,6 +280,36 @@
         </div>
         <div id="inspector-content" style="display: none"></div>
       </aside>
+    </div>
+
+    <!-- AI CHAT PANEL -->
+    <div id="ai-chat-panel" class="ai-chat-panel">
+      <div class="chat-header">
+        <div class="chat-header-left">
+          <div class="chat-avatar-icon">✦</div>
+          <div class="chat-header-info">
+            <div class="chat-title">Asistente IA</div>
+            <div class="chat-subtitle" id="chat-context-label">Sin diálogo activo</div>
+          </div>
+        </div>
+        <button class="chat-minimize-btn" id="chat-minimize" title="Cerrar">×</button>
+      </div>
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-quick-actions">
+        <button class="chat-quick-btn" data-msg="Dame un resumen del proyecto: cuántos NPCs, quests, diálogos y nodos totales hay">Resumen</button>
+        <button class="chat-quick-btn" data-msg="Crea 3 opciones de respuesta para el jugador a partir del nodo inicial y conéctalas">3 Opciones</button>
+        <button class="chat-quick-btn" data-msg="Organiza todos los nodos con auto-layout">Organizar</button>
+        <button class="chat-quick-btn" data-msg="¿Qué nodos tienen texto en español pero no en inglés?">Sin EN</button>
+      </div>
+      <div class="chat-input-area">
+        <textarea id="chat-input" rows="1" placeholder="Escribe tu instrucción... (Enter para enviar)"></textarea>
+        <button id="chat-send" title="Enviar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <!-- CONTEXT MENU -->

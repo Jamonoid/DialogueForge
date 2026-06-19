@@ -12,12 +12,14 @@ import * as Sidebar from './modules/sidebar.js';
 import { initLangToggle } from './modules/lang.js';
 import { hideContextMenu, showAISettingsModal, showAIGenerateModal, showAILoading, hideAILoading, toast } from './modules/ui.js';
 import * as AI from './modules/ai.js';
+import * as Chat from './modules/chat.js';
 
 // ─── RENDER ALL ──────────────────────────────────────
 function renderAll() {
   Sidebar.render();
   Canvas.render();
   Inspector.render();
+  Chat.onStateChange();
 
   // Disable AI toolbar buttons when no dialogue is active
   const hasDlg = !!State.getActiveDialogue();
@@ -166,6 +168,7 @@ function setupKeyboard() {
       const ids = [...State.getSelectedNodeIds()];
       State.clearSelection();
       let count = 0;
+      State.startBatch();
       ids.forEach((id) => {
         const dup = State.duplicateNode(id);
         if (dup) {
@@ -173,6 +176,7 @@ function setupKeyboard() {
           count++;
         }
       });
+      State.endBatch();
       if (count > 0) {
         toast(count + ' nodo(s) duplicado(s)', 'success');
         renderAll();
@@ -183,7 +187,9 @@ function setupKeyboard() {
     if ((e.key === 'Delete' || (e.key === 'Backspace' && !isInput)) && State.getSelectedNodeIds().size > 0 && !isInput) {
       e.preventDefault();
       const ids = [...State.getSelectedNodeIds()];
+      State.startBatch();
       ids.forEach((id) => State.deleteNode(id));
+      State.endBatch();
       Inspector.clear();
     }
 
@@ -214,6 +220,9 @@ function init() {
 
   // C1: Expose save for Electron close confirmation
   window.__dialogueForgeSave = () => State.saveToFile();
+
+  // Initialize AI chat assistant
+  Chat.setup(renderAll, Canvas.autoLayout);
 }
 
 init();

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Dialogue Forge** is a standalone desktop application (Electron + Vite) for creating branched dialogue trees for turn-based games. It's inspired by Obsidian's node-based interface but focused exclusively on dialogue authoring.
+**Dialogue Forge** is a standalone desktop application (Electron + Vite) for creating branched dialogue trees for games.
 
 ## Tech Stack
 
@@ -35,7 +35,8 @@ src/
     ui.js          → Modals, toasts, context menus, confirmDelete, AI settings/generate modals
     lang.js        → Language toggle (ES/EN)
     ai.js          → OpenRouter API: translation (ES→EN), dialogue generation, PDF/MD parsing
-    prompts.js     → Centralized AI prompt templates (translation, generation, extension)
+    chat.js        → Integrated AI chat assistant: floating panel, action executor, project context builder
+    prompts.js     → Centralized AI prompt templates (translation, generation, extension, chat)
   utils/
     helpers.js     → uid(), $(), $$(), esc()
 ```
@@ -188,11 +189,3 @@ npm run build    # Build for production (dist/)
 - **Connection Navigation Click Guards**: Clicking a connection card in the inspector navigates to the target node, but any clicks targeting child action buttons like deletion (`.conn-delete`) or reordering (`.conn-reorder`) are explicitly ignored by checking event targets to prevent unwanted navigation.
 - **Color Resiliency Guards**: When rendering nodes or inspector cards for NPCs, check for null/undefined color values (`npc.color`) before applying inline style overrides (e.g. `undefined20` hex overrides) to prevent breaking css rules on legacy data.
 
-## Future Plans
-
-- **Search**: Find nodes by text content.
-- **Dialogue Simulator**: Interactive chat modal to test dialogue trees.
-- **Minimap**: Visual overview of large dialogue trees.
-- **Sidebar Drag & Drop**: Reorder NPCs, Quests, Dialogues by dragging.
-- **Copy/Paste Nodes**: Ctrl+C/V for duplicating nodes.
-- **Project Statistics**: Dashboard showing total NPCs, nodes, translation coverage.
