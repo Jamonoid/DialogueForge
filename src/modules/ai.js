@@ -5,6 +5,12 @@
 import { toast } from './ui.js';
 import * as State from './state.js';
 import { setText } from './lang.js';
+import {
+  TRANSLATE_SINGLE_SYSTEM,
+  TRANSLATE_BATCH_SYSTEM,
+  buildGenerateSystemPrompt,
+  buildExtendSystemPrompt,
+} from './prompts.js';
 
 // Callback for auto-layout (set by canvas.js after initialization to avoid circular imports)
 let _autoLayoutFn = null;
@@ -96,16 +102,8 @@ export async function translateNode(nodeId) {
   }
 
   const messages = [
-    {
-      role: 'system',
-      content: `You are a professional video game dialogue translator. Translate the following game dialogue from Spanish to English.
-Preserve the tone, style, character voice, and context of the original dialogue.
-Respond ONLY with the translation, no explanations or notes.`
-    },
-    {
-      role: 'user',
-      content: sourceText
-    }
+    { role: 'system', content: TRANSLATE_SINGLE_SYSTEM },
+    { role: 'user', content: sourceText }
   ];
 
   const translated = await callOpenRouter(messages);
@@ -132,17 +130,8 @@ export async function translateAllNodes() {
   const texts = nodesToTranslate.map((n, i) => `[${i + 1}] ${n.text.es}`).join('\n---\n');
 
   const messages = [
-    {
-      role: 'system',
-      content: `You are a professional video game dialogue translator. Translate game dialogues from Spanish to English.
-Preserve the tone, style, and context. You will receive multiple numbered texts separated by "---".
-Respond with EACH translation in the same numbered format [N], separated by "---".
-ONLY translations, no explanations.`
-    },
-    {
-      role: 'user',
-      content: texts
-    }
+    { role: 'system', content: TRANSLATE_BATCH_SYSTEM },
+    { role: 'user', content: texts }
   ];
 
   const result = await callOpenRouter(messages, { maxTokens: 4096 });
@@ -178,61 +167,7 @@ function sanitizeJSON(str) {
 
 // ─── DIALOGUE GENERATION ─────────────────────────────
 
-function buildSystemPrompt(npcName, npcListText, contextBlock, minNodes, maxNodes) {
-  return `You are a professional video game dialogue writer. Generate branching dialogues in JSON format.
-${npcName ? `The main speaking NPC is named "${npcName}".` : ''}
-Available NPCs in the project: [${npcListText}].
-${contextBlock}
-
-Respond ONLY with valid JSON in this exact structure:
-{
-  "nodes": [
-    {
-      "id": "node_1",
-      "npc": "Iris",
-      "text_es": "Hola viajero. ¿Qué te trae al cañón?",
-      "connections": ["node_player_option_1", "node_player_option_2"]
-    },
-    {
-      "id": "node_player_option_1",
-      "npc": "Jugador",
-      "text_es": "Busco aventuras.",
-      "connections": ["node_npc_response_1"]
-    },
-    {
-      "id": "node_player_option_2",
-      "npc": "Jugador",
-      "text_es": "Solo estoy de paso.",
-      "connections": ["node_npc_response_2"]
-    },
-    {
-      "id": "node_npc_response_1",
-      "npc": "Iris",
-      "text_es": "Pues has venido al lugar indicado. El cañón está lleno de misterios.",
-      "connections": []
-    },
-    {
-      "id": "node_npc_response_2",
-      "npc": "Iris",
-      "text_es": "Entiendo. Ten cuidado, las rocas aquí pueden ser peligrosas.",
-      "connections": []
-    }
-  ],
-  "startNodeId": "node_1"
-}
-
-Rules:
-- Each node has a unique id (node_1, node_2, etc.)
-- npc is the name of the NPC speaking this node.
-  * Use "Jugador" (or "Player") for player options/responses.
-  * Use one of the available NPCs: [${npcListText}] for NPC dialogues. If a different speaker is needed, write their name and a new NPC will be created.
-- text_es is the dialogue text in Spanish (either what the NPC says, or the player's choice text)
-- Do NOT include text_en or any English translation.
-- connections is a simple array of target node IDs (strings), e.g., ["node_2", "node_3"]. Do NOT include labels or objects.
-- Create natural, branching dialogues with multiple player choice options represented as sibling nodes.
-- Minimum ${minNodes} nodes, maximum ${maxNodes} nodes.
-- Every branch should eventually conclude (nodes with no connections are endings).`;
-}
+// buildSystemPrompt is now in prompts.js as buildGenerateSystemPrompt
 
 function getContextAndNpcs() {
   let contextBlock = '';
@@ -266,7 +201,7 @@ function parseAIResponse(result) {
 
 export async function generateDialogue(prompt, npcName, { minNodes = 5, maxNodes = 15 } = {}) {
   const { contextBlock, npcListText } = getContextAndNpcs();
-  const systemPrompt = buildSystemPrompt(npcName, npcListText, contextBlock, minNodes, maxNodes);
+  const systemPrompt = buildGenerateSystemPrompt(npcName, npcListText, contextBlock, minNodes, maxNodes);
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -302,43 +237,7 @@ export async function extendDialogue(prompt, npcName, { minNodes = 5, maxNodes =
 
   const leafIds = leafNodes.map((n) => `"${n.id}"`).join(', ');
 
-  const systemPrompt = `You are a professional video game dialogue writer. You must EXTEND an existing dialogue by generating NEW continuation nodes.
-${npcName ? `The main speaking NPC is named "${npcName}".` : ''}
-Available NPCs in the project: [${npcListText}].
-${contextBlock}
-
-The existing dialogue has these nodes:
-${existingSummary}
-
-The leaf nodes (endings that need continuation) are: [${leafIds}]
-
-You must generate NEW nodes that continue from one or more of these leaf nodes.
-
-Respond ONLY with valid JSON in this structure:
-{
-  "nodes": [
-    {
-      "id": "ext_1",
-      "npc": "NPC Name",
-      "text_es": "...",
-      "connections": ["ext_2"]
-    }
-  ],
-  "linkFrom": {
-    "EXISTING_LEAF_NODE_ID": ["ext_1"],
-    "ANOTHER_LEAF_ID": ["ext_3"]
-  }
-}
-
-Rules:
-- "nodes" contains ONLY the NEW nodes you are generating (do NOT repeat existing nodes).
-- "linkFrom" maps existing leaf node IDs to the new node IDs they should connect to. This connects the existing dialogue to your new content.
-- Each new node has a unique id starting with "ext_" (ext_1, ext_2, etc.)
-- npc is the name of the NPC speaking. Use "Jugador" for player options/responses.
-- connections within new nodes reference other new node IDs only.
-- Minimum ${minNodes} new nodes, maximum ${maxNodes} new nodes.
-- Do NOT include text_en or any English translation.
-- Every new branch should eventually conclude (nodes with empty connections are endings).`;
+  const systemPrompt = buildExtendSystemPrompt(npcName, npcListText, contextBlock, existingSummary, leafIds, minNodes, maxNodes);
 
   const messages = [
     { role: 'system', content: systemPrompt },
