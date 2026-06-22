@@ -1,8 +1,8 @@
 # Dialogue Forge
 
-Editor visual de árboles de diálogo construido para el desarrollo de videojuegos. Crea conversaciones ramificadas, gestiona NPCs y quests, traduce entre idiomas y genera diálogos con IA — todo desde una sola aplicación de escritorio.
+Editor visual de árboles de diálogo construido para el desarrollo de videojuegos. Crea conversaciones ramificadas, gestiona NPCs y quests, traduce entre idiomas y genera diálogos con IA.
 
-Construido con Electron, Vite y JavaScript vanilla. Sin frameworks.
+Construido con Electron, Vite y JavaScript.
 
 ---
 
@@ -12,13 +12,12 @@ Construido con Electron, Vite y JavaScript vanilla. Sin frameworks.
 - Canvas basado en nodos para crear y conectar líneas de diálogo
 - Posicionamiento de nodos con arrastrar y soltar, con auto-layout para árboles ramificados
 - Edición de texto inline en el canvas o en el panel inspector
-- Ramificación condicional con condiciones `IF` y acciones `DO` en las conexiones
+- Ramificación condicional con condiciones `IF` y acciones `DO` en las conexiones (Solo visual)
 - Multi-selección, duplicación y eliminación en lote de nodos
 - Historial completo de deshacer/rehacer (Ctrl+Z / Ctrl+Y)
 
 ### Gestión de Proyecto
-- Gestión de NPCs, Quests y Diálogos desde una barra lateral colapsable
-- Reordenamiento con arrastrar y soltar de NPCs, Quests y Diálogos
+- Gestión de NPCs, Quests y Diálogos desde una barra lateral.
 - Colores personalizados para NPCs para identificación visual en el canvas
 - Asignación de diálogos a NPCs y Quests
 - Guardar/cargar proyectos como archivos `.json` con auto-guardado en localStorage
