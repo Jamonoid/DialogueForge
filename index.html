@@ -132,6 +132,16 @@
             </svg>
             Chat IA
           </button>
+          <button class="toolbar-btn" id="btn-audio-slicer" title="Cortador de Audio">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="6" cy="6" r="3"/>
+              <circle cx="6" cy="18" r="3"/>
+              <line x1="20" y1="4" x2="8.12" y2="15.88"/>
+              <line x1="14.47" y1="14.48" x2="20" y2="20"/>
+              <line x1="8.12" y1="8.12" x2="12" y2="12"/>
+            </svg>
+            Audio Slicer
+          </button>
         </div>
 
         <div class="toolbar-spacer"></div>
@@ -309,6 +319,71 @@
             <polygon points="22 2 15 22 11 13 2 9 22 2"/>
           </svg>
         </button>
+      </div>
+    </div>
+
+    <!-- AUDIO SLICER OVERLAY -->
+    <div id="audio-slicer-overlay" class="slicer-overlay" tabindex="-1">
+      <div class="slicer-header">
+        <div class="slicer-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+            <circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
+            <line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/>
+            <line x1="8.12" y1="8.12" x2="12" y2="12"/>
+          </svg>
+          Audio Slicer
+        </div>
+        <span id="slicer-file-info" class="slicer-file-info"></span>
+        <div class="slicer-header-actions">
+          <button class="btn btn-sm" id="slicer-clear" title="Cargar otro audio">🔄 Nuevo</button>
+          <button class="slicer-close" title="Cerrar (Esc)">✕</button>
+        </div>
+      </div>
+
+      <div class="slicer-drop-zone">
+        <div class="slicer-drop-content">
+          <div class="slicer-drop-icon">🎵</div>
+          <div class="slicer-drop-text">Arrastra un audio aquí o haz clic para subir</div>
+          <div class="slicer-drop-hint">.wav, .mp3, .ogg</div>
+        </div>
+      </div>
+
+      <div class="slicer-workspace hidden">
+        <div class="slicer-waveform-container">
+          <canvas id="slicer-waveform"></canvas>
+          <canvas id="slicer-overlay-canvas"></canvas>
+        </div>
+
+        <div class="slicer-transport">
+          <div class="slicer-transport-left">
+            <button class="slicer-transport-btn" id="slicer-stop" title="Detener">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+            </button>
+            <button class="slicer-transport-btn slicer-play-btn" id="slicer-play" title="Reproducir / Pausar (Espacio)">
+              <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </button>
+            <span class="slicer-time-display" id="slicer-time-display">00:00 / 00:00</span>
+          </div>
+          <div class="slicer-transport-right">
+            <button class="slicer-zoom-btn" id="slicer-zoom-out" title="Alejar">−</button>
+            <button class="slicer-zoom-btn" id="slicer-zoom-fit" title="Ajustar a pantalla">⊡</button>
+            <button class="slicer-zoom-btn" id="slicer-zoom-in" title="Acercar">+</button>
+            <span class="slicer-hint">Clic = corte · Shift+Clic = playhead · Arrastrar = mover · Clic derecho = eliminar</span>
+          </div>
+        </div>
+
+        <div class="slicer-segments">
+          <div class="slicer-segments-header">
+            <span>Segmentos</span>
+            <span id="slicer-segment-count"></span>
+          </div>
+          <div class="slicer-segment-list" id="slicer-segment-list"></div>
+        </div>
+
+        <div class="slicer-export-bar">
+          <button class="btn btn-primary" id="slicer-export-zip">📦 Exportar todo (.zip)</button>
+          <button class="btn" id="slicer-export-single">📁 Exportar individuales</button>
+        </div>
       </div>
     </div>
 

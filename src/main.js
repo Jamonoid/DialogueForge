@@ -13,6 +13,7 @@ import { initLangToggle } from './modules/lang.js';
 import { hideContextMenu, showAISettingsModal, showAIGenerateModal, showAILoading, hideAILoading, toast } from './modules/ui.js';
 import * as AI from './modules/ai.js';
 import * as Chat from './modules/chat.js';
+import * as AudioSlicer from './modules/audio-slicer.js';
 
 // ─── RENDER ALL ──────────────────────────────────────
 function renderAll() {
@@ -48,6 +49,10 @@ document.addEventListener('langchange', () => {
   Canvas.render();
   Inspector.render();
 });
+
+// Audio Slicer
+AudioSlicer.init();
+$('#btn-audio-slicer')?.addEventListener('click', () => AudioSlicer.open());
 
 // ─── TOOLBAR ─────────────────────────────────────────
 function setupToolbar() {

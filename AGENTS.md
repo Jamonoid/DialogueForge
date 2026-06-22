@@ -154,6 +154,18 @@ Legacy configs with a single `model` field are auto-migrated to all three on fir
 - **Copy/Paste Nodes**: Ctrl+C/V for duplicating nodes.
 - **Project Statistics**: Dashboard showing total NPCs, nodes, translation coverage.
 
+### Audio Slicer (`src/modules/audio-slicer.js`)
+Self-contained tool for splitting dialogue recordings into individual audio clips.
+- **Toolbar button**: "Audio Slicer" in toolbar opens a full-screen overlay
+- **Audio loading**: Drag & drop or file picker. Supports `.wav`, `.mp3`, `.ogg`
+- **Waveform**: Rendered on `<canvas>` via `AudioContext.decodeAudioData()`. Two stacked canvases: waveform (static) + overlay (markers/cursor, re-rendered on interaction)
+- **Markers**: Click waveform to add cut markers. Drag to reposition. Right-click to delete
+- **Zoom/Scroll**: Ctrl+Wheel = zoom, Wheel = horizontal scroll
+- **Playback**: `AudioBufferSourceNode` for segment previews. Animated cursor via `requestAnimationFrame`
+- **Segments list**: Editable names, play buttons, time ranges
+- **Export**: `wav-encoder.js` for pure JS WAV encoding (44-byte header + Int16 PCM). JSZip (lazy-imported) for .zip bundle export
+- **State**: Fully self-contained (no interaction with dialogue State module)
+
 #### Dialogue Generation
 - `generateDialogue(prompt, npcName)` — Generates a branching dialogue tree from a prompt
 - `insertGeneratedDialogue(data)` — Inserts the generated nodes and connections into the canvas
