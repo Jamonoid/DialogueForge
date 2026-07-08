@@ -20,6 +20,8 @@ Construido con Electron, Vite y JavaScript.
 - Gestión de NPCs, Quests y Diálogos desde una barra lateral.
 - Colores personalizados para NPCs para identificación visual en el canvas
 - Asignación de diálogos a NPCs y Quests
+- **Agrupar, ordenar y filtrar diálogos**: agrupa la lista por NPC o por Quest, ordena por orden manual o título (A→Z / Z→A) y filtra por texto (título, NPC o Quest). Las preferencias de agrupación y orden se recuerdan entre sesiones
+- Reordenamiento de la lista mediante arrastrar y soltar (en modo manual sin agrupar)
 - Guardar/cargar proyectos como archivos `.json` con auto-guardado en localStorage
 - Exportar/importar para respaldo y control de versiones
 
@@ -44,7 +46,8 @@ Herramienta integrada para dividir grabaciones de voz en clips de diálogo indiv
 - Clic para colocar marcadores de corte, arrastrar para ajustar, clic derecho para eliminar
 - Shift+Clic para establecer la posición de inicio de reproducción (playhead)
 - Previsualización de segmentos individuales antes de exportar
-- Nombres de segmentos editables
+- Nombres de segmentos editables (numerados automáticamente por defecto)
+- **Prefijo de exportación configurable**: define un prefijo (autocompletado con el nombre del audio) que se antepone al número de cada clip, p. ej. `dialogo_01.wav`, `dialogo_02.wav`. Los nombres se sanitizan para ser válidos en el sistema de archivos
 - Exportar todos los segmentos como un .zip de archivos .wav, o descargar individualmente
 - Zoom y scroll horizontal para navegar grabaciones largas
 
