@@ -298,12 +298,33 @@ export function sanitizeJSON(str) {
 
 // buildSystemPrompt is now in prompts.js as buildGenerateSystemPrompt
 
-function getContextAndNpcs() {
+async function getContextAndNpcs(query) {
   let contextBlock = '';
-  if (config.contextFiles && config.contextFiles.length > 0) {
+
+  // RAG: retrieve only the lore fragments relevant to the generation prompt.
+  // Dynamic import — vector-memory.js statically imports ai.js, so a static
+  // import here would create a cycle. Chat exchanges are excluded: assistant
+  // conversations about the app are not world lore.
+  let usedRag = false;
+  try {
+    const VectorMemory = await import('./vector-memory.js');
+    if (query && VectorMemory.isEnabled() && (await VectorMemory.hasIndex())) {
+      const hits = await VectorMemory.search(query, { k: 10, types: ['file', 'node', 'npc', 'quest'] });
+      if (hits.length > 0) {
+        const ragText = hits
+          .map((h) => `[${h.typeLabel} · sim ${h.score.toFixed(2)}] ${h.text}`)
+          .join('\n---\n');
+        contextBlock = `\n\nRelevant world lore (fragments retrieved from the local vector memory because they are semantically relevant to the user's request):\n${ragText}`;
+        usedRag = true;
+      }
+    }
+  } catch { /* vector memory unavailable — fall back to the raw dump below */ }
+
+  if (!usedRag && config.contextFiles && config.contextFiles.length > 0) {
     const filesText = config.contextFiles.map((f) => `--- ${f.name} ---\n${f.text}`).join('\n\n');
     contextBlock = `\n\nWorld context documents:\n${filesText.slice(0, 8000)}`;
   }
+
   const allNpcs = State.getState().npcs || [];
   const npcListText = allNpcs.length > 0 ? allNpcs.map((n) => `"${n.name}"`).join(', ') : 'Ninguno';
   return { contextBlock, npcListText };
@@ -329,7 +350,7 @@ function parseAIResponse(result) {
 }
 
 export async function generateDialogue(prompt, npcName, { minNodes = 5, maxNodes = 15 } = {}) {
-  const { contextBlock, npcListText } = getContextAndNpcs();
+  const { contextBlock, npcListText } = await getContextAndNpcs(prompt);
   const systemPrompt = buildGenerateSystemPrompt(npcName, npcListText, contextBlock, minNodes, maxNodes);
 
   const messages = [
@@ -348,7 +369,7 @@ export async function extendDialogue(prompt, npcName, { minNodes = 5, maxNodes =
   const dlg = State.getActiveDialogue();
   if (!dlg) throw new Error('No hay diálogo activo');
 
-  const { contextBlock, npcListText } = getContextAndNpcs();
+  const { contextBlock, npcListText } = await getContextAndNpcs(prompt);
   const { normalizeConnection } = await import('./state.js');
 
   // Find leaf nodes (nodes with empty connections)

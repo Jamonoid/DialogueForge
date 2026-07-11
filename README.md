@@ -1,8 +1,6 @@
-# Dialogue Forge
+# Jamon's Dialogue Editor
 
 Editor visual de árboles de diálogo construido para el desarrollo de videojuegos. Crea conversaciones ramificadas, gestiona NPCs y quests, traduce entre idiomas y genera diálogos con IA.
-
-Construido con Electron, Vite y JavaScript.
 
 ---
 
@@ -31,13 +29,31 @@ Construido con Electron, Vite y JavaScript.
 - Traducción en lote con IA (ES a EN) para el diálogo activo
 - Traducción por nodo desde el panel inspector
 
-### Integración de IA (via OpenRouter)
+### Integración de IA (multi-proveedor)
+- **Dos proveedores, seleccionables por tarea**:
+  - **OpenRouter** — API HTTP, requiere API key, pago por token, acceso a cientos de modelos
+  - **Claude Code** — usa el CLI `claude` instalado localmente con tu suscripción Claude
 - **Generación de diálogos**: Describe una conversación y la IA crea un árbol de diálogo ramificado completo con nodos y conexiones
 - **Extensión de diálogos**: Extiende diálogos existentes desde nodos hoja
 - **Traducción**: Traduce nodos individuales o diálogos completos
 - **Asistente de chat**: Un panel de chat integrado que puede leer el diálogo activo, crear nodos, actualizar texto y modificar conexiones mediante acciones estructuradas
-- **Modelos separados por tarea**: Configura diferentes LLMs para generación (ej. Claude Sonnet), traducción (ej. Gemini Flash) y chat de forma independiente
-- **Archivos de contexto**: Sube archivos PDF, Markdown o texto con lore del mundo que se inyectan en los prompts de IA
+- **Proveedor y modelo separados por tarea**: Configura proveedor + LLM distintos para generación, traducción y chat de forma independiente, con sugerencias de modelos y botón "🔌 Probar conexión"
+- **Archivos de contexto**: Sube archivos PDF, Markdown o texto con lore del mundo. Con la memoria vectorial indexada, la IA recupera solo los fragmentos relevantes a cada petición (RAG); sin índice, se inyectan directamente en los prompts
+
+### Memoria Vectorial y Mapa Neuronal
+- **Embeddings 100% locales** con transformers.js (descarga el modelo una vez, ~50 MB, luego funciona offline; sin API key). Modelo configurable en la Configuración de IA
+- **Indexa todo el proyecto**: nodos de diálogo, archivos de contexto (troceados), NPCs, quests e historial del chat. Los vectores viven en IndexedDB, fuera del estado del proyecto
+- **RAG en chat y generación**: cada mensaje del chat y cada generación de diálogo recupera los fragmentos semánticamente más relevantes en lugar de volcar toda la documentación (menos tokens, mejores respuestas, documentación sin límite de tamaño)
+- **Mapa neuronal** (botón 🧠 Memoria): visualización 2D de toda la memoria (proyección PCA) con conexiones por similitud, filtros por tipo, zoom/pan, tooltips y clic para navegar al nodo en el editor
+- **Indexación incremental**: la primera indexación es manual ("⚡ Indexar proyecto"); después se refresca sola en segundo plano al editar
+- El botón 🗑 del chat borra el historial y su memoria vectorial
+
+### Control externo vía MCP
+La app expone un servidor MCP embebido (`http://127.0.0.1:4747/mcp`) mientras está abierta, para que un Claude Code externo (p. ej. desde el repo del GDD) pueda leer y editar diálogos directamente sobre el canvas en vivo:
+
+```bash
+claude mcp add --transport http --scope user dialogue-forge http://127.0.0.1:4747/mcp
+```
 
 ### Audio Slicer
 Herramienta integrada para dividir grabaciones de voz en clips de diálogo individuales:
@@ -46,8 +62,9 @@ Herramienta integrada para dividir grabaciones de voz en clips de diálogo indiv
 - Clic para colocar marcadores de corte, arrastrar para ajustar, clic derecho para eliminar
 - Shift+Clic para establecer la posición de inicio de reproducción (playhead)
 - Previsualización de segmentos individuales antes de exportar
-- Nombres de segmentos editables (numerados automáticamente por defecto)
-- **Prefijo de exportación configurable**: define un prefijo (autocompletado con el nombre del audio) que se antepone al número de cada clip, p. ej. `dialogo_01.wav`, `dialogo_02.wav`. Los nombres se sanitizan para ser válidos en el sistema de archivos
+- Nombres de segmentos editables (los cambios manuales se conservan al mover marcadores)
+- **Patrón de nombres configurable** con tokens: `{file}` (nombre del audio), `{num}` (01, 02...), `{num3}` (001, 002...). Por defecto `{file}_{num}` → `dialogo_01.wav`, `dialogo_02.wav`
+- **Renombrado en lote**: "↻ Aplicar a todos" (re-aplica el patrón) y buscar/reemplazar sobre todos los nombres. Los duplicados se desambiguan solos al exportar y los nombres se sanitizan para el sistema de archivos
 - Exportar todos los segmentos como un .zip de archivos .wav, o descargar individualmente
 - Zoom y scroll horizontal para navegar grabaciones largas
 
@@ -56,6 +73,7 @@ Herramienta integrada para dividir grabaciones de voz en clips de diálogo indiv
 ## Requisitos
 
 - Node.js (v18 o posterior recomendado)
+- Opcional: CLI de [Claude Code](https://claude.com/claude-code) instalado y logueado, para usar el proveedor "Claude Code" sin API key
 
 ## Instalación
 
@@ -90,8 +108,9 @@ npm install
 ```
 Dialogues/
   electron/          Proceso principal de Electron
-    main.js          Gestión de ventanas, IPC, diálogos de archivo
+    main.js          Gestión de ventanas, IPC, diálogos de archivo, spawn de Claude Code
     preload.js       Puente seguro entre renderer y main
+    mcp-server.js    Servidor MCP embebido (HTTP en 127.0.0.1:4747)
   src/
     main.js          Punto de entrada de la app, conexión de módulos
     style.css        Todos los estilos (custom properties CSS, sin frameworks)
@@ -103,8 +122,11 @@ Dialogues/
       nodes.js       Renderizado de nodos en DOM, edición inline, resize
       inspector.js   Panel derecho para editar propiedades de nodo/NPC/quest
       sidebar.js     Panel izquierdo con listas de NPCs/quests/diálogos
-      ai.js          Integración con la API de OpenRouter, traducción, generación
-      chat.js        Asistente de chat con IA y acciones estructuradas
+      ai.js          IA multi-proveedor (OpenRouter + Claude Code), traducción, generación
+      chat.js        Asistente de chat con IA, acciones estructuradas, retrieval RAG
+      vector-memory.js Memoria semántica local: embeddings transformers.js + IndexedDB
+      memory-map.js  Mapa neuronal: proyección PCA 2D de la memoria vectorial
+      mcp-bridge.js  Ejecutor de herramientas MCP contra el estado en vivo
       prompts.js     System prompts para generación y extensión de diálogos
       lang.js        Toggle de idioma (ES/EN)
       ui.js          Modales, toasts, menús contextuales, UI de configuración
