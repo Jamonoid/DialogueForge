@@ -8,6 +8,8 @@ import * as AI from './ai.js';
 import * as VectorMemory from './vector-memory.js';
 import { buildChatSystemPrompt } from './prompts.js';
 import { toast, confirmDelete } from './ui.js';
+// Shared with the MCP bridge so chat actions and MCP tools behave identically
+import { writeDialogueGraph, buildValidationReport, clearDialogueContent } from './mcp-bridge.js';
 
 // ─── MODULE STATE ─────────────────────────────────────
 let chatHistory = []; // [{role, content, actionSummary}]
@@ -85,15 +87,39 @@ ${otherDlgs}`;
  * by their temp_id within the same response.
  * @returns {string[]} Human-readable summary lines.
  */
+function findNPCOrCreate(name) {
+  const clean = (name || '').trim();
+  if (!clean) return null;
+  const npcs = State.getState().npcs;
+  let npc = npcs.find(n => n.name.toLowerCase() === clean.toLowerCase());
+  if (!npc) npc = State.addNPC(clean);
+  return npc;
+}
+
+function findQuestOrCreate(name) {
+  const clean = (name || '').trim();
+  if (!clean) return null;
+  const quests = State.getState().quests;
+  let quest = quests.find(q => q.name.toLowerCase() === clean.toLowerCase());
+  if (!quest) quest = State.addQuest(clean);
+  return quest;
+}
+
 function executeActions(actions) {
   if (!actions || actions.length === 0) return [];
 
   const tempIdMap = {}; // temp_id string → real node ID
   const summary = [];
+  const pendingDialogueDeletes = []; // destructive — confirmed with the user after the batch
   let addedCount = 0;
 
   // Resolve a user-supplied ID: could be a temp_id or a real node ID
   const resolveId = (id) => (id ? (tempIdMap[id] || id) : null);
+
+  // Resolve an optional dialogue_id (default: active dialogue)
+  const resolveDlg = (dialogueId) => dialogueId
+    ? State.getState().dialogues.find(d => d.id === dialogueId) || null
+    : State.getActiveDialogue();
 
   // Calculate base Y for auto-positioned new nodes (below existing ones)
   const dlg = State.getActiveDialogue();
@@ -105,7 +131,7 @@ function executeActions(actions) {
   // Start a batch for state changes so we get one undo checkpoint and one re-render.
   // Always batch because even a single add_node can trigger multiple internal mutations
   // (addNode + addNPC + updateNodeNPC) that would otherwise create separate undo entries.
-  const mutatingActions = actions.filter(a => a.type !== 'auto_layout');
+  const mutatingActions = actions.filter(a => a.type !== 'auto_layout' && a.type !== 'validate_dialogue');
   const useBatch = mutatingActions.length > 0;
   if (useBatch) State.startBatch();
 
@@ -140,16 +166,16 @@ function executeActions(actions) {
 
             // Assign or create NPC
             if (action.npc && action.npc.trim()) {
-              const npcName = action.npc.trim();
-              const npcs = State.getState().npcs;
-              let npc = npcs.find(n => n.name.toLowerCase() === npcName.toLowerCase());
-              if (!npc) npc = State.addNPC(npcName);
+              const npc = findNPCOrCreate(action.npc);
               if (npc) State.updateNodeNPC(node.id, npc.id);
             }
 
+            if (action.condition !== undefined) State.updateNodeCondition(node.id, action.condition || '');
+            if (action.action !== undefined) State.updateNodeAction(node.id, action.action || '');
+
             addedCount++;
             const preview = action.text_es ? `"${action.text_es.slice(0, 40)}"` : '(no text)';
-            summary.push(`✓ Node created: ${preview}`);
+            summary.push(`✓ Node created: ${preview} [ID:${node.id}]`);
           }
           break;
         }
@@ -170,12 +196,12 @@ function executeActions(actions) {
           }
 
           if (action.npc && action.npc.trim()) {
-            const npcName = action.npc.trim();
-            const npcs = State.getState().npcs;
-            let npc = npcs.find(n => n.name.toLowerCase() === npcName.toLowerCase());
-            if (!npc) npc = State.addNPC(npcName);
+            const npc = findNPCOrCreate(action.npc);
             if (npc) State.updateNodeNPC(nodeId, npc.id);
           }
+
+          if (action.condition !== undefined) State.updateNodeCondition(nodeId, action.condition || '');
+          if (action.action !== undefined) State.updateNodeAction(nodeId, action.action || '');
 
           summary.push(`✓ Node updated: ...${nodeId.slice(-6)}`);
           break;
@@ -186,7 +212,17 @@ function executeActions(actions) {
           const targetId = resolveId(action.target_id);
           if (!sourceId || !targetId) { summary.push('⚠ Invalid connection IDs'); break; }
           State.addConnection(sourceId, targetId);
-          summary.push(`✓ Connected: ...${sourceId.slice(-5)} → ...${targetId.slice(-5)}`);
+          if (action.label) State.updateConnectionLabel(sourceId, targetId, action.label);
+          summary.push(`✓ Connected: ...${sourceId.slice(-5)} → ...${targetId.slice(-5)}${action.label ? ` ("${action.label}")` : ''}`);
+          break;
+        }
+
+        case 'disconnect_nodes': {
+          const sourceId = resolveId(action.source_id);
+          const targetId = resolveId(action.target_id);
+          if (!sourceId || !targetId) { summary.push('⚠ Invalid connection IDs'); break; }
+          State.removeConnection(sourceId, targetId);
+          summary.push(`✓ Disconnected: ...${sourceId.slice(-5)} → ...${targetId.slice(-5)}`);
           break;
         }
 
@@ -226,6 +262,115 @@ function executeActions(actions) {
           break;
         }
 
+        case 'write_dialogue_graph': {
+          // Full tree in one action — shared implementation with the MCP bridge.
+          // Validates the payload before mutating; throws (→ ⚠ summary) on bad refs.
+          const res = writeDialogueGraph(action);
+          Object.assign(tempIdMap, res.idMap); // later actions can reference the temp ids
+          if (res.mode !== 'append' && res.dialogueId === State.getActiveDialogueId()) {
+            needsAutoLayout = true; // canvas layout is prettier than the built-in one
+          }
+          summary.push(`✓ Dialogue graph written: ${res.nodeCount} nodes (${res.mode}) [dialogue ${res.dialogueId}]`);
+          break;
+        }
+
+        case 'create_dialogue': {
+          const title = (action.title || '').trim();
+          if (!title) { summary.push('⚠ create_dialogue: missing title'); break; }
+          const npc = action.npc ? findNPCOrCreate(action.npc) : null;
+          const quest = action.quest ? findQuestOrCreate(action.quest) : null;
+          const newDlg = State.addDialogue(title, npc?.id || null, quest?.id || null);
+          if (action.comment && action.comment.trim()) State.updateDialogue(newDlg.id, { comment: action.comment.trim() });
+          // Subsequent add_node actions target the new (now active) dialogue
+          baseY = 120;
+          addedCount = 0;
+          summary.push(`✓ Dialogue created & activated: "${title}" [ID:${newDlg.id}]`);
+          break;
+        }
+
+        case 'set_active_dialogue': {
+          const target = State.getState().dialogues.find(d => d.id === action.dialogue_id);
+          if (!target) { summary.push(`⚠ Dialogue not found: ${action.dialogue_id}`); break; }
+          State.setActiveDialogueId(target.id);
+          baseY = 120;
+          if (target.nodes.length > 0) {
+            baseY = Math.max(...target.nodes.map(n => (n.y || 0) + (n.height || 160))) + 80;
+          }
+          addedCount = 0;
+          summary.push(`✓ Active dialogue: "${target.title}"`);
+          break;
+        }
+
+        case 'update_dialogue': {
+          const target = resolveDlg(action.dialogue_id);
+          if (!target) { summary.push('⚠ update_dialogue: dialogue not found'); break; }
+          const updates = {};
+          if (action.title && action.title.trim()) updates.title = action.title.trim();
+          if (action.npc !== undefined) updates.npcId = action.npc ? (findNPCOrCreate(action.npc)?.id || null) : null;
+          if (action.quest !== undefined) updates.questId = action.quest ? (findQuestOrCreate(action.quest)?.id || null) : null;
+          if (action.comment !== undefined) updates.comment = action.comment;
+          if (Object.keys(updates).length === 0) { summary.push('⚠ update_dialogue: nothing to update'); break; }
+          State.updateDialogue(target.id, updates);
+          summary.push(`✓ Dialogue updated: "${updates.title || target.title}" (${Object.keys(updates).join(', ')})`);
+          break;
+        }
+
+        case 'set_comment': {
+          const kind = action.target; // 'npc' | 'quest' | 'dialogue'
+          const text = (action.comment || '').trim();
+          if (kind === 'npc') {
+            const npc = State.getState().npcs.find(n => n.id === action.id);
+            if (!npc) { summary.push(`⚠ NPC not found: ${action.id}`); break; }
+            State.updateNPCComment(npc.id, text);
+            summary.push(`✓ Note set on NPC "${npc.name}"`);
+          } else if (kind === 'quest') {
+            const quest = State.getState().quests.find(q => q.id === action.id);
+            if (!quest) { summary.push(`⚠ Quest not found: ${action.id}`); break; }
+            State.updateQuestComment(quest.id, text);
+            summary.push(`✓ Note set on quest "${quest.name}"`);
+          } else if (kind === 'dialogue') {
+            const target = State.getState().dialogues.find(d => d.id === action.id);
+            if (!target) { summary.push(`⚠ Dialogue not found: ${action.id}`); break; }
+            State.updateDialogue(target.id, { comment: text });
+            summary.push(`✓ Note set on dialogue "${target.title}"`);
+          } else {
+            summary.push(`⚠ set_comment: invalid target "${kind}" (use npc/quest/dialogue)`);
+          }
+          break;
+        }
+
+        case 'clear_dialogue': {
+          const target = resolveDlg(action.dialogue_id);
+          if (!target) { summary.push('⚠ clear_dialogue: dialogue not found'); break; }
+          const removed = target.nodes.length;
+          clearDialogueContent(target);
+          summary.push(`✓ Dialogue cleared: ${removed} nodes removed ("${target.title}")`);
+          break;
+        }
+
+        case 'delete_dialogue': {
+          const target = State.getState().dialogues.find(d => d.id === action.dialogue_id);
+          if (!target) { summary.push(`⚠ Dialogue not found: ${action.dialogue_id}`); break; }
+          // Destructive: queued and confirmed with the user after the batch
+          pendingDialogueDeletes.push(target);
+          summary.push(`ℹ Deletion of "${target.title}" pending user confirmation`);
+          break;
+        }
+
+        case 'validate_dialogue': {
+          const target = resolveDlg(action.dialogue_id);
+          if (!target) { summary.push('⚠ validate_dialogue: dialogue not found'); break; }
+          const r = buildValidationReport(target);
+          summary.push(`ℹ Validation "${r.title}": ${r.ok ? 'OK' : 'PROBLEMS'} — ${r.nodeCount} nodes, ${r.edgeCount} edges`);
+          if (r.noStartNode) summary.push('  ⚠ No start node');
+          if (r.unreachable) summary.push(`  ⚠ Unreachable: ${r.unreachable.join(', ')}`);
+          if (r.brokenConnections) summary.push(`  ⚠ Broken connections: ${r.brokenConnections.map(b => `${b.from}→${b.to}`).join(', ')}`);
+          if (r.missingTextEs) summary.push(`  ⚠ Empty ES text: ${r.missingTextEs.join(', ')}`);
+          if (r.missingTextEn) summary.push(`  ℹ Empty EN text: ${r.missingTextEn.join(', ')}`);
+          if (r.endings) summary.push(`  ℹ Endings (no outgoing): ${r.endings.join(', ')}`);
+          break;
+        }
+
         default:
           summary.push(`⚠ Unknown action: ${action.type}`);
       }
@@ -235,6 +380,14 @@ function executeActions(actions) {
   }
 
   if (useBatch) State.endBatch();
+
+  // Destructive deletions always go through the user (same convention as the UI)
+  pendingDialogueDeletes.forEach((dlgToDelete) => {
+    confirmDelete(
+      `El asistente quiere eliminar el diálogo "${dlgToDelete.title}" (${dlgToDelete.nodes.length} nodos). ¿Confirmar?`,
+      () => State.deleteDialogue(dlgToDelete.id)
+    );
+  });
 
   // Run auto-layout after state settles
   if ((needsAutoLayout || addedCount >= 3) && _autoLayout) {
@@ -405,10 +558,14 @@ async function sendMessage() {
       ? systemPrompt + worldContextBlock
       : systemPrompt;
 
-    // Last 20 messages to keep context window manageable
+    // Last 20 messages to keep context window manageable.
+    // Action results (real node IDs, validation reports) are appended to past
+    // assistant turns so the AI can build on what its actions actually did.
     const historyForAPI = chatHistory.slice(-20).map(m => ({
       role: m.role,
-      content: m.content,
+      content: m.actionSummary && m.actionSummary.length > 0
+        ? `${m.content}\n\n[Executed action results]\n${m.actionSummary.join('\n')}`
+        : m.content,
     }));
 
     const raw = await AI.callAI(
@@ -526,7 +683,7 @@ export function setup(renderAll, autoLayout) {
   // Welcome message
   chatHistory.push({
     role: 'assistant',
-    content: 'Hola. Soy tu asistente de diálogos. Puedo crear nodos, conectarlos, escribir diálogos completos, modificar texto, crear NPCs y responder preguntas sobre el proyecto. ¿Con qué empezamos?',
+    content: 'Hola. Soy tu asistente de diálogos.',
     actionSummary: [],
   });
   renderMessages();

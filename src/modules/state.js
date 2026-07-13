@@ -38,7 +38,10 @@ let currentFilePath = null;
 let undoStack = [];
 let redoStack = [];
 const MAX_UNDO = 50;
-let isBatching = false;
+// Batch nesting depth — batches can nest (e.g. the chat executor wraps actions
+// that internally use their own startBatch/endBatch). Only the outermost batch
+// pushes the undo checkpoint and emits the final change.
+let batchDepth = 0;
 
 // Callback for when state changes — set by main.js
 let onChangeCallback = null;
@@ -53,16 +56,14 @@ export function onChange(cb) {
 
 /** Allow external modules to start batch processing of multiple state updates */
 export function startBatch() {
-  if (!isBatching) {
-    pushUndo();
-    isBatching = true;
-  }
+  if (batchDepth === 0) pushUndo();
+  batchDepth++;
 }
 
-/** End batch processing and trigger a single emitChange */
+/** End batch processing; the outermost endBatch triggers a single emitChange */
 export function endBatch() {
-  isBatching = false;
-  emitChange();
+  batchDepth = Math.max(0, batchDepth - 1);
+  if (batchDepth === 0) emitChange();
 }
 
 /** Allow external modules to notify state changes manually */
@@ -71,7 +72,7 @@ export function notifyChange() {
 }
 
 function pushUndo() {
-  if (isBatching) return;
+  if (batchDepth > 0) return;
   undoStack.push(JSON.stringify(state));
   if (undoStack.length > MAX_UNDO) undoStack.shift();
   redoStack = []; // Clear redo on new action
@@ -101,7 +102,7 @@ export function redo() {
 }
 
 function emitChange() {
-  if (isBatching) {
+  if (batchDepth > 0) {
     dirty = true;
     updateStatus();
     return;

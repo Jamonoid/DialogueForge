@@ -173,24 +173,30 @@ If the user asks you to modify the project, populate "actions" with the appropri
 
 ## Available Actions
 
+### write_dialogue_graph — PREFERRED for creating or rewriting whole dialogue trees
+Writes a full tree (nodes + connections + start) in ONE action, using your own temp ids:
+{"type":"write_dialogue_graph","title":"...","npc":"MainNPC","quest":"QuestName","comment":"author note","nodes":[{"id":"n1","npc":"Iris","text_es":"...","text_en":"...","condition":"","action":""}],"connections":[{"from":"n1","to":"n2","label":"player choice text"}],"start":"n1"}
+- With "title": creates a new dialogue and makes it active (npc/quest/comment optional).
+- Without "title": writes into the active dialogue (or "dialogue_id"). "mode":"replace" (default) clears existing nodes first — use it to rewrite; "mode":"append" keeps them (connections may then reference real existing node ids).
+- Node "id" values are temp ids; later actions in the same response can reference them.
+- condition/action are optional game-logic fields on any node (e.g. condition:"quest_active(Q1)", action:"give_item(sword)").
+- Layout is automatic — no auto_layout needed after this.
+
 ### add_node
-Creates a new dialogue node in the active dialogue.
-{"type":"add_node","temp_id":"n1","text_es":"...","text_en":"...","npc":"NPCName","x":300,"y":100}
+Creates one node in the active dialogue. For 2+ nodes prefer write_dialogue_graph.
+{"type":"add_node","temp_id":"n1","text_es":"...","text_en":"...","npc":"NPCName","condition":"","action":"","x":300,"y":100}
 - temp_id: optional string. Lets you reference this node in later actions within the same response (e.g. in connect_nodes).
-- text_es: Spanish dialogue text.
-- text_en: English dialogue text (optional).
 - npc: NPC name to assign (optional). If the NPC doesn't exist, it will be created automatically.
-- x, y: canvas position (optional, auto-positioned if omitted).
+- condition/action: optional game-logic fields. x, y: optional canvas position.
 
 ### update_node
-Updates the text or NPC of an existing node.
-{"type":"update_node","node_id":"REAL_OR_TEMP_ID","text_es":"...","text_en":"...","npc":"NPCName"}
-- node_id: the real node ID from the project context, or a temp_id from this response.
-- All fields except node_id are optional (only provided fields are updated).
+Updates fields of an existing node. Only provided fields change ("" clears condition/action).
+{"type":"update_node","node_id":"REAL_OR_TEMP_ID","text_es":"...","text_en":"...","npc":"NPCName","condition":"...","action":"..."}
 
-### connect_nodes
-Creates a directed connection (arrow) from one node to another.
-{"type":"connect_nodes","source_id":"REAL_OR_TEMP_ID","target_id":"REAL_OR_TEMP_ID"}
+### connect_nodes / disconnect_nodes
+Create or remove a directed connection (arrow). label is the optional player-choice text.
+{"type":"connect_nodes","source_id":"REAL_OR_TEMP_ID","target_id":"REAL_OR_TEMP_ID","label":"..."}
+{"type":"disconnect_nodes","source_id":"REAL_OR_TEMP_ID","target_id":"REAL_OR_TEMP_ID"}
 
 ### delete_node
 Removes a node from the active dialogue (also removes its connections).
@@ -200,23 +206,41 @@ Removes a node from the active dialogue (also removes its connections).
 Marks a node as the entry point of the dialogue.
 {"type":"set_start_node","node_id":"REAL_OR_TEMP_ID"}
 
+### create_dialogue / set_active_dialogue / update_dialogue
+{"type":"create_dialogue","title":"...","npc":"MainNPC","quest":"QuestName","comment":"author note"} — creates an empty dialogue and activates it (prefer write_dialogue_graph if you already know the tree).
+{"type":"set_active_dialogue","dialogue_id":"..."} — switches the active dialogue; later actions target it.
+{"type":"update_dialogue","dialogue_id":"...","title":"...","npc":"...","quest":"...","comment":"..."} — dialogue_id optional (defaults to active); only provided fields change.
+
+### clear_dialogue / delete_dialogue
+{"type":"clear_dialogue","dialogue_id":"..."} — removes ALL nodes, leaving one empty start node (dialogue_id optional).
+{"type":"delete_dialogue","dialogue_id":"..."} — deletes a whole dialogue; the user is asked to confirm.
+
+### validate_dialogue
+Structural check: unreachable nodes, broken connections, empty ES/EN texts, endings.
+{"type":"validate_dialogue","dialogue_id":"..."} — dialogue_id optional (defaults to active). Results appear in your next-turn context as [Executed action results].
+
+### set_comment
+Sets the author note of an NPC, quest or dialogue (context notes like when a dialogue triggers).
+{"type":"set_comment","target":"npc|quest|dialogue","id":"REAL_ID","comment":"..."}
+
 ### create_npc
 Creates a new NPC in the project sidebar.
 {"type":"create_npc","name":"NPCName","color":"#ff6b6b"}
 - color is optional (auto-assigned if omitted).
 
 ### auto_layout
-Automatically arranges all nodes into a readable tree layout. Run this after adding several nodes.
+Automatically arranges all nodes into a readable tree layout. Only needed after manual add_node/connect_nodes sequences — write_dialogue_graph lays out automatically.
 {"type":"auto_layout"}
 
 ## Critical Rules
-- ALWAYS put add_node actions BEFORE any connect_nodes that reference their temp_ids.
+- For whole trees (create or rewrite), use ONE write_dialogue_graph action instead of many add_node + connect_nodes.
+- ALWAYS put add_node / write_dialogue_graph actions BEFORE any other actions that reference their temp_ids.
 - temp_ids can be any string (e.g. "n1", "guard_reply", "player_opt_1"). Use them consistently within one response.
 - Real node IDs look like long alphanumeric strings in the project context (e.g. "m7k2xp1q").
-- For branching dialogue trees, follow this pattern: NPC node → multiple Player choice nodes → NPC response nodes.
-- If no dialogue is active, do not create nodes — tell the user to select or create one first.
+- For branching dialogue trees, follow this pattern: NPC node → multiple Player choice nodes → NPC response nodes. Put the player's choice text in the connection "label" when the design uses labeled choices.
+- If no dialogue is active, create one with write_dialogue_graph ("title") or create_dialogue — or ask the user which dialogue to open.
 - Respond in the same language the user wrote in (Spanish → Spanish, English → English).
 - Keep "message" concise. Summarize what you did or answer the question directly.
-- When creating full dialogue trees (3+ nodes), always end with an auto_layout action.
+- After a big write, you may add {"type":"validate_dialogue"} as the last action to verify the tree.
 - A "Relevant Project Memory" section may appear below with fragments retrieved by semantic similarity (dialogue nodes, lore documents, past chat turns). Use them as context when they help; ignore fragments that are not relevant to the current request.`;
 }
