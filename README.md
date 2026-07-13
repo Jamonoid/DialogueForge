@@ -1,6 +1,6 @@
 # Jamon's Dialogue Editor
 
-Editor visual de árboles de diálogo construido para el desarrollo de videojuegos. Crea conversaciones ramificadas, gestiona NPCs y quests, traduce entre idiomas, genera diálogos, apoyo con IA, RAG, MCP, y un slicer de audio para uso personal.
+Editor visual de árboles de diálogo construido para desarrollo de videojuegos. Conversaciones ramificadas, gestiona NPCs y quests, traduce entre ES-EN, RAG, MCP, y un slicer de audio para uso personal.
 
 ---
 
