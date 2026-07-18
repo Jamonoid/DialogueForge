@@ -60,8 +60,9 @@ export function renderNodes(dlg, container) {
       const nodeW = node.width || 240;
       let nodeStyle = `left: ${node.x}px; top: ${node.y}px; width: ${nodeW}px;`;
       if (node.height) nodeStyle += ` height: ${node.height}px;`;
-      if (npcColor) nodeStyle += ` border-color: ${npcColor};`;
-      if (npcColor && isSelected) nodeStyle += ` box-shadow: 0 0 0 2px ${hexToRgba(npcColor, 0.4)}, var(--shadow-lg);`;
+      // Inline NPC border only when NOT selected — the .selected CSS rule
+      // (gold ring + halo) must win, and inline styles beat any class rule.
+      if (npcColor && !isSelected) nodeStyle += ` border-color: ${npcColor};`;
 
       const placeholderText = lang === 'es' ? 'Escribe el diálogo...' : 'Write dialogue...';
 

@@ -25,7 +25,7 @@ function createWindow() {
     minHeight: 600,
     title: "Jamon's Dialogue Editor",
     icon: path.join(__dirname, 'icon.png'),
-    backgroundColor: '#0d0f14',
+    backgroundColor: '#131313',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
