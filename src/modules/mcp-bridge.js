@@ -411,7 +411,12 @@ const tools = {
     const activeId = State.getActiveDialogueId();
     return {
       npcs: (state.npcs || []).map((n) => ({ id: n.id, name: n.name, color: n.color || null, comment: n.comment || null })),
-      quests: (state.quests || []).map((q) => ({ id: q.id, name: q.name, comment: q.comment || null })),
+      quests: (state.quests || []).map((q) => ({
+        id: q.id,
+        name: q.name,
+        comment: q.comment || null,
+        relatedNpcs: (q.npcIds || []).map(npcName).filter(Boolean),
+      })),
       dialogues: (state.dialogues || []).map((d) => ({
         id: d.id,
         title: d.title,
@@ -420,8 +425,51 @@ const tools = {
         nodeCount: d.nodes.length,
         isActive: d.id === activeId,
       })),
+      storyMap: { nodeCount: (State.getStory().nodes || []).length, hint: 'Read the full graph with get_story_map' },
       currentFile: State.getCurrentFilePath() || null,
     };
+  },
+
+  get_story_map() {
+    const state = State.getState();
+    const story = State.getStory();
+    const questById = new Map((state.quests || []).map((q) => [q.id, q]));
+
+    const nodes = story.nodes.map((n) => {
+      const q = n.questId ? questById.get(n.questId) : null;
+      const item = { id: n.id, quest: q ? q.name : null };
+      if (n.text?.es) item.es = n.text.es;
+      if (n.text?.en) item.en = n.text.en;
+      return item;
+    });
+
+    // Edges as [from, to, condition?] — the label on the arrow is the condition
+    // for the target quest/step to start.
+    const edges = [];
+    story.nodes.forEach((n) => {
+      (n.connections || []).forEach((c) => {
+        const { targetId, label } = State.normalizeConnection(c);
+        edges.push(label ? [n.id, targetId, label] : [n.id, targetId]);
+      });
+    });
+
+    // Relacionados per quest referenced in the map (shared across nodes of the same quest)
+    const quests = {};
+    const usedQuestIds = [...new Set(story.nodes.map((n) => n.questId).filter(Boolean))];
+    usedQuestIds.forEach((qid) => {
+      const q = questById.get(qid);
+      if (!q) return;
+      quests[q.name] = {
+        id: q.id,
+        comment: q.comment || null,
+        relatedNpcs: (q.npcIds || []).map(npcName).filter(Boolean),
+        relatedDialogues: (state.dialogues || [])
+          .filter((d) => d.questId === qid)
+          .map((d) => ({ id: d.id, title: d.title })),
+      };
+    });
+
+    return { start: story.startNodeId, nodes, edges, quests };
   },
 
   get_dialogue({ dialogue_id, format } = {}) {
@@ -643,6 +691,225 @@ const tools = {
     State.notifyChange();
     return { type, id, comment: text };
   },
+
+  // ─── STORY MAP TOOLS ───────────────────────────────
+  // All of these mutate State.getStory() directly (inside a batch), so they
+  // work regardless of the current view; the canvas re-renders if the story
+  // view is open. Edges carry the CONDITION for the next quest/step to start.
+
+  write_story_map({ mode, nodes = [], connections = [], start } = {}) {
+    const story = State.getStory();
+    const isAppend = mode === 'append';
+
+    if (!Array.isArray(nodes) || nodes.length === 0) {
+      throw new Error('nodes must be a non-empty array');
+    }
+    const tempIds = new Set();
+    nodes.forEach((spec) => {
+      if (!spec || typeof spec.id !== 'string' || !spec.id.trim()) {
+        throw new Error('Every node needs a string id (a temp id like "n1")');
+      }
+      if (tempIds.has(spec.id)) throw new Error(`Duplicate node id in payload: ${spec.id}`);
+      tempIds.add(spec.id);
+    });
+    const existingIds = new Set(isAppend ? story.nodes.map((n) => n.id) : []);
+    tempIds.forEach((id) => {
+      if (existingIds.has(id)) throw new Error(`Node id collides with an existing story node: ${id}. Use fresh temp ids.`);
+    });
+    const known = (id) => tempIds.has(id) || existingIds.has(id);
+    (connections || []).forEach((e) => {
+      if (!e || !e.from || !e.to) throw new Error('Each connection needs { from, to }');
+      if (!known(e.from)) throw new Error(`Connection references unknown node: ${e.from}`);
+      if (!known(e.to)) throw new Error(`Connection references unknown node: ${e.to}`);
+      if (e.from === e.to) throw new Error(`Cannot connect a node to itself: ${e.from}`);
+    });
+    if (start && !known(start)) throw new Error(`start references unknown node: ${start}`);
+
+    State.startBatch();
+    try {
+      if (!isAppend) {
+        if (State.getViewMode() === 'story') State.clearSelection();
+        story.nodes = [];
+        story.startNodeId = null;
+      }
+      const idMap = {};
+      const base = isAppend ? nextNodePosition(story) : { x: 300, y: 100 };
+      nodes.forEach((spec, i) => {
+        const node = makeNode(base.x + (i % 3) * 380, base.y + Math.floor(i / 3) * 230);
+        node.width = 320;
+        node.questId = spec.quest ? (findOrCreateQuest(spec.quest)?.id || null) : null;
+        node.text = { es: spec.text_es || '', en: spec.text_en || '' };
+        story.nodes.push(node);
+        idMap[spec.id] = node.id;
+      });
+      const real = (id) => idMap[id] || id;
+      (connections || []).forEach((e) => upsertConnection(story, real(e.from), real(e.to), e.condition ?? e.label));
+      if (start) story.startNodeId = real(start);
+      else if (!story.startNodeId) story.startNodeId = real(nodes[0].id);
+      if (!isAppend) layoutTree(story);
+      return { mode: isAppend ? 'append' : 'replace', nodeCount: story.nodes.length, startNodeId: story.startNodeId, idMap };
+    } finally {
+      State.endBatch();
+    }
+  },
+
+  add_story_node({ quest, text_es, text_en, x, y } = {}) {
+    const story = State.getStory();
+    State.startBatch();
+    try {
+      const pos = nextNodePosition(story);
+      const node = makeNode(x !== undefined ? x : pos.x, y !== undefined ? y : pos.y);
+      node.width = 320;
+      node.questId = quest ? (findOrCreateQuest(quest)?.id || null) : null;
+      node.text = { es: text_es || '', en: text_en || '' };
+      story.nodes.push(node);
+      if (!story.startNodeId) story.startNodeId = node.id;
+      return { nodeId: node.id, quest: quest || null };
+    } finally {
+      State.endBatch();
+    }
+  },
+
+  update_story_node({ node_id, quest, text_es, text_en }) {
+    const story = State.getStory();
+    const node = requireNode(story, node_id);
+    State.startBatch();
+    try {
+      if (quest !== undefined) node.questId = quest ? (findOrCreateQuest(quest)?.id || null) : null;
+      if (text_es !== undefined || text_en !== undefined) {
+        node.text = {
+          es: text_es !== undefined ? text_es : (node.text?.es || ''),
+          en: text_en !== undefined ? text_en : (node.text?.en || ''),
+        };
+      }
+      return { nodeId: node_id, updated: true };
+    } finally {
+      State.endBatch();
+    }
+  },
+
+  delete_story_node({ node_id }) {
+    const story = State.getStory();
+    requireNode(story, node_id);
+    State.startBatch();
+    try {
+      if (State.getViewMode() === 'story' && State.isNodeSelected(node_id)) State.toggleNodeSelection(node_id);
+      removeNodeFrom(story, node_id);
+      return { deleted: node_id };
+    } finally {
+      State.endBatch();
+    }
+  },
+
+  connect_story_nodes({ from, to, condition }) {
+    const story = State.getStory();
+    State.startBatch();
+    try {
+      upsertConnection(story, from, to, condition);
+      return { connected: `${from} → ${to}`, condition: condition || '' };
+    } finally {
+      State.endBatch();
+    }
+  },
+
+  disconnect_story_nodes({ from, to }) {
+    const story = State.getStory();
+    const source = requireNode(story, from);
+    State.startBatch();
+    try {
+      const before = (source.connections || []).length;
+      source.connections = (source.connections || [])
+        .map(State.normalizeConnection)
+        .filter((c) => c.targetId !== to);
+      if (source.connections.length === before) {
+        throw new Error(`No connection ${from} → ${to} to remove`);
+      }
+      return { disconnected: `${from} → ${to}` };
+    } finally {
+      State.endBatch();
+    }
+  },
+
+  set_story_start({ node_id }) {
+    const story = State.getStory();
+    requireNode(story, node_id);
+    State.startBatch();
+    try {
+      story.startNodeId = node_id;
+      return { startNodeId: node_id };
+    } finally {
+      State.endBatch();
+    }
+  },
+
+  validate_story() {
+    const story = State.getStory();
+    const report = buildValidationReport(story);
+    delete report.dialogueId;
+    delete report.title;
+    // Story-specific checks (informational — they don't flip ok)
+    const withoutQuest = story.nodes.filter((n) => !n.questId).map((n) => n.id);
+    if (withoutQuest.length) report.nodesWithoutQuest = withoutQuest;
+    const unlabeled = [];
+    story.nodes.forEach((n) => {
+      (n.connections || []).forEach((c) => {
+        const conn = State.normalizeConnection(c);
+        if (!conn.label) unlabeled.push([n.id, conn.targetId]);
+      });
+    });
+    if (unlabeled.length) report.edgesWithoutCondition = unlabeled;
+    return report;
+  },
+
+  update_quest_relations({ quest_name, add_npcs = [], remove_npcs = [], add_dialogues = [], remove_dialogues = [] }) {
+    if (!quest_name || !String(quest_name).trim()) throw new Error('quest_name is required');
+    const quest = findOrCreateQuest(String(quest_name));
+    const state = State.getState();
+    if (!Array.isArray(quest.npcIds)) quest.npcIds = [];
+
+    // Dialogues can be referenced by id or exact title (case-insensitive)
+    const findDialogue = (ref) => {
+      const dlg = (state.dialogues || []).find(
+        (d) => d.id === ref || d.title.toLowerCase() === String(ref).toLowerCase()
+      );
+      if (!dlg) throw new Error(`Dialogue not found: ${ref}`);
+      return dlg;
+    };
+
+    State.startBatch();
+    try {
+      const summary = { quest: quest.name, questId: quest.id, addedNpcs: [], removedNpcs: [], addedDialogues: [], removedDialogues: [] };
+      add_npcs.forEach((name) => {
+        const npc = findOrCreateNPC(name);
+        if (npc && !quest.npcIds.includes(npc.id)) {
+          quest.npcIds.push(npc.id);
+          summary.addedNpcs.push(npc.name);
+        }
+      });
+      remove_npcs.forEach((name) => {
+        const npc = (state.npcs || []).find((n) => n.name.toLowerCase() === String(name).toLowerCase());
+        if (npc && quest.npcIds.includes(npc.id)) {
+          quest.npcIds = quest.npcIds.filter((id) => id !== npc.id);
+          summary.removedNpcs.push(npc.name);
+        }
+      });
+      add_dialogues.forEach((ref) => {
+        const dlg = findDialogue(ref);
+        State.updateDialogue(dlg.id, { questId: quest.id });
+        summary.addedDialogues.push(dlg.title);
+      });
+      remove_dialogues.forEach((ref) => {
+        const dlg = findDialogue(ref);
+        if (dlg.questId === quest.id) {
+          State.updateDialogue(dlg.id, { questId: null });
+          summary.removedDialogues.push(dlg.title);
+        }
+      });
+      return summary;
+    } finally {
+      State.endBatch();
+    }
+  },
 };
 
 // ─── SETUP ───────────────────────────────────────────
@@ -650,10 +917,23 @@ const tools = {
 export function setup(autoLayoutFn) {
   _autoLayout = autoLayoutFn;
 
+  // Tools that never go through view-dependent CRUD (reads + story-map tools,
+  // which mutate state.story directly): they must not yank the user out of
+  // the story map view.
+  const VIEW_SAFE_TOOLS = new Set([
+    'get_project_summary', 'get_dialogue', 'validate_dialogue',
+    'get_story_map', 'write_story_map', 'add_story_node', 'update_story_node',
+    'delete_story_node', 'connect_story_nodes', 'disconnect_story_nodes',
+    'set_story_start', 'validate_story', 'update_quest_relations',
+  ]);
+
   window.__mcpExecute = async (toolName, args) => {
     const impl = tools[toolName];
     if (!impl) return { ok: false, error: `Unknown tool: ${toolName}` };
     try {
+      // Dialogue edit tools may rely on the active view (e.g. auto_layout). If
+      // the story map view is open, switch back so they hit the active dialogue.
+      if (!VIEW_SAFE_TOOLS.has(toolName) && State.getViewMode() === 'story') State.setViewMode('dialogue');
       const result = await impl(args || {});
       return { ok: true, ...result };
     } catch (err) {

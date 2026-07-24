@@ -348,6 +348,8 @@ function renderDialogue(id) {
 
 // ─── Node Inspector ──────────────────────────────────
 function renderNode(nodeId) {
+  // Story map view → dedicated inspector
+  if (State.getViewMode() === 'story') return renderStoryNode(nodeId);
   const dlg = State.getActiveDialogue();
   if (!dlg) return clear();
   const node = dlg.nodes.find((n) => n.id === nodeId);
@@ -550,5 +552,257 @@ function renderNode(nodeId) {
     } finally {
       hideAILoading();
     }
+  });
+}
+
+// ─── Story Node Inspector (mapa de historia) ─────────
+function renderStoryNode(nodeId) {
+  const story = State.getStory();
+  const node = story.nodes.find((n) => n.id === nodeId);
+  if (!node) return clear();
+
+  const isStart = story.startNodeId === nodeId;
+  const lang = getLang();
+  const currentText = t(node.text);
+  const el = $('#inspector-content');
+  const { npcs, quests, dialogues } = State.getState();
+
+  const quest = node.questId ? State.getQuest(node.questId) : null;
+  const questNpcIds = quest && Array.isArray(quest.npcIds) ? quest.npcIds : [];
+  const relatedNpcs = questNpcIds.map((id) => State.getNPC(id)).filter(Boolean);
+  const availableNpcs = npcs.filter((n) => !questNpcIds.includes(n.id));
+  const relatedDialogues = quest ? dialogues.filter((d) => d.questId === quest.id) : [];
+  const availableDialogues = quest ? dialogues.filter((d) => d.questId !== quest.id) : [];
+
+  // Outgoing / incoming connections (preview: quest name or node text)
+  const nodePreview = (n) => {
+    const q = n.questId ? State.getQuest(n.questId) : null;
+    const txt = q ? q.name : t(n.text);
+    return txt ? '— ' + txt.slice(0, 25) : '(sin texto)';
+  };
+  const outgoing = (node.connections || [])
+    .map((c) => {
+      const conn = State.normalizeConnection(c);
+      const target = story.nodes.find((n) => n.id === conn.targetId);
+      return target ? { target, label: conn.label } : null;
+    })
+    .filter(Boolean);
+  const incoming = story.nodes.filter((n) =>
+    n.connections && n.connections.some((c) => State.normalizeConnection(c).targetId === nodeId)
+  );
+
+  el.innerHTML = `
+    <div class="inspector-header">
+      <div class="type-indicator quest-type">${isStart ? '▶' : 'H'}</div>
+      <h3>Paso de historia ${isStart ? '(Inicio)' : ''}</h3>
+      <span class="inspector-lang-badge">${lang.toUpperCase()}</span>
+    </div>
+    <div class="inspector-body">
+      <div class="field-group">
+        <label class="field-label">Quest</label>
+        <select class="field-select" id="insp-story-quest">
+          <option value="">— Sin Quest —</option>
+          ${quests.map((q) => `<option value="${q.id}" ${node.questId === q.id ? 'selected' : ''}>${esc(q.name)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label">Descripción <span class="lang-hint">[${lang.toUpperCase()}]</span></label>
+        <textarea class="field-textarea" id="insp-story-text" placeholder="Describe la quest / paso de la historia...">${currentText}</textarea>
+      </div>
+
+      <!-- Relacionados (viven en la Quest: compartidos entre nodos de la misma quest) -->
+      <div class="connections-section related-section">
+        <div class="connections-header">
+          <h4>Relacionados</h4>
+        </div>
+        ${!quest ? '<p class="empty-state" style="padding:8px 0">Asigna una quest para definir NPCs y diálogos relacionados.</p>' : `
+        <div class="field-group">
+          <label class="field-label">NPCs (${relatedNpcs.length})</label>
+          <div class="related-chips">
+            ${relatedNpcs.map((n) => `
+              <span class="related-chip" style="border-color:${n.color || '#6c5ce7'}55;color:${n.color || '#6c5ce7'}">
+                ${esc(n.name)}
+                <button class="chip-remove" data-remove-npc="${n.id}" title="Quitar de la quest">×</button>
+              </span>`).join('')}
+            ${relatedNpcs.length === 0 ? '<span class="field-hint">Sin NPCs relacionados</span>' : ''}
+          </div>
+          ${availableNpcs.length > 0 ? `
+          <select class="field-select" id="insp-story-add-npc" style="margin-top:6px">
+            <option value="">+ Añadir NPC...</option>
+            ${availableNpcs.map((n) => `<option value="${n.id}">${esc(n.name)}</option>`).join('')}
+          </select>` : ''}
+        </div>
+        <div class="field-group">
+          <label class="field-label">Diálogos (${relatedDialogues.length})</label>
+          <div id="insp-story-dialogues">
+            ${relatedDialogues.map((d) => `
+              <div class="connection-card" data-nav-dialogue="${d.id}" style="cursor:pointer" title="Clic para abrir el diálogo">
+                <span class="conn-preview">🗨 ${esc(d.title)}</span>
+                <div class="conn-actions">
+                  <button class="conn-delete" data-remove-dialogue="${d.id}" title="Quitar de la quest">×</button>
+                </div>
+              </div>`).join('')}
+            ${relatedDialogues.length === 0 ? '<span class="field-hint">Sin diálogos relacionados</span>' : ''}
+          </div>
+          ${availableDialogues.length > 0 ? `
+          <select class="field-select" id="insp-story-add-dialogue" style="margin-top:6px">
+            <option value="">+ Añadir diálogo...</option>
+            ${availableDialogues.map((d) => `<option value="${d.id}">${esc(d.title)}</option>`).join('')}
+          </select>` : ''}
+        </div>`}
+      </div>
+
+      <!-- Outgoing connections with editable labels -->
+      <div class="connections-section">
+        <div class="connections-header">
+          <h4>Conexiones salientes (${outgoing.length})</h4>
+        </div>
+        <div id="insp-connections-list">
+          ${outgoing.map(({ target, label }, idx) => `
+            <div class="connection-card story-conn" data-nav-node="${target.id}" style="cursor:pointer" title="Clic para ir al nodo">
+              <span class="conn-preview">#${target.id.slice(-5)} ${nodePreview(target)}</span>
+              <div class="conn-actions">
+                ${outgoing.length > 1 ? `<button class="conn-reorder" data-conn-target="${target.id}" data-dir="up" title="Subir" ${idx === 0 ? 'disabled' : ''}>▲</button><button class="conn-reorder" data-conn-target="${target.id}" data-dir="down" title="Bajar" ${idx === outgoing.length - 1 ? 'disabled' : ''}>▼</button>` : ''}
+                <button class="conn-delete" data-conn-target="${target.id}" title="Eliminar conexión">×</button>
+              </div>
+              <input class="field-input conn-label-input" data-label-target="${target.id}" value="${esc(label || '')}" placeholder="Condición para que empiece..." title="Etiqueta de la conexión (se dibuja sobre la flecha)">
+            </div>`).join('')}
+          ${outgoing.length === 0 ? '<p class="empty-state" style="padding:8px 0">Sin conexiones. Arrastra desde el conector ↓ del nodo.</p>' : ''}
+        </div>
+      </div>
+
+      ${incoming.length > 0 ? `
+      <div class="connections-section incoming">
+        <div class="connections-header">
+          <h4>Recibe de (${incoming.length})</h4>
+        </div>
+        ${incoming.map((src) => `
+          <div class="connection-card incoming-card" data-nav-node="${src.id}" style="cursor:pointer" title="Clic para ir al nodo">
+            <span class="conn-preview">#${src.id.slice(-5)} ${nodePreview(src)}</span>
+          </div>`).join('')}
+      </div>
+      ` : ''}
+
+      <div class="field-group" style="margin-top: 4px;">
+        <label class="field-label">ID</label>
+        <input class="field-input" value="${node.id}" readonly style="opacity:0.5;cursor:default;">
+      </div>
+
+      <div style="margin-top:8px">
+        ${!isStart ? '<button class="btn btn-block" id="insp-set-start" style="margin-bottom:8px">Establecer como inicio</button>' : ''}
+        <button class="btn btn-block" id="insp-duplicate" style="margin-bottom:8px">Duplicar nodo</button>
+        <button class="btn btn-danger btn-block" id="insp-node-delete">Eliminar Nodo</button>
+      </div>
+    </div>
+  `;
+
+  // ── Event listeners ──
+  $('#insp-story-quest').addEventListener('change', (e) => {
+    State.updateStoryNodeQuest(nodeId, e.target.value || null);
+  });
+
+  $('#insp-story-text').addEventListener('focus', () => {
+    State.pushUndoCheckpoint();
+  });
+  $('#insp-story-text').addEventListener('input', (e) => {
+    isEditing = true;
+    const updated = setText({ ...node.text }, e.target.value);
+    State.updateNodeText(nodeId, updated);
+    isEditing = false;
+  });
+
+  // Relacionados: NPCs
+  $$('.chip-remove[data-remove-npc]', el).forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      State.removeNpcFromQuest(node.questId, btn.dataset.removeNpc);
+    });
+  });
+  const addNpcSel = $('#insp-story-add-npc');
+  if (addNpcSel) {
+    addNpcSel.addEventListener('change', () => {
+      if (addNpcSel.value) State.addNpcToQuest(node.questId, addNpcSel.value);
+    });
+  }
+
+  // Relacionados: Diálogos
+  $$('[data-remove-dialogue]', el).forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      State.pushUndoCheckpoint();
+      State.updateDialogue(btn.dataset.removeDialogue, { questId: null });
+      State.notifyChange();
+    });
+  });
+  const addDlgSel = $('#insp-story-add-dialogue');
+  if (addDlgSel) {
+    addDlgSel.addEventListener('change', () => {
+      const dlgId = addDlgSel.value;
+      if (!dlgId) return;
+      const d = State.getState().dialogues.find((x) => x.id === dlgId);
+      if (d && d.questId && d.questId !== node.questId) {
+        const prevQuest = State.getQuest(d.questId);
+        toast(`"${d.title}" se movió desde la quest "${prevQuest ? prevQuest.name : '?'}"`, 'info');
+      }
+      State.pushUndoCheckpoint();
+      State.updateDialogue(dlgId, { questId: node.questId });
+      State.notifyChange();
+    });
+  }
+  $$('.connection-card[data-nav-dialogue]', el).forEach((card) => {
+    card.addEventListener('click', (e) => {
+      if (e.target.classList.contains('conn-delete')) return;
+      document.dispatchEvent(new CustomEvent('df-open-dialogue', { detail: { id: card.dataset.navDialogue } }));
+    });
+  });
+
+  // Connection labels (drawn on the arrows in the story canvas)
+  $$('.conn-label-input', el).forEach((input) => {
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('focus', () => State.pushUndoCheckpoint());
+    input.addEventListener('input', (e) => {
+      isEditing = true;
+      State.updateConnectionLabel(nodeId, input.dataset.labelTarget, e.target.value);
+      isEditing = false;
+    });
+  });
+
+  // Connection actions (delete / reorder / navigate)
+  $$('.conn-delete[data-conn-target]', el).forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      State.removeConnection(nodeId, btn.dataset.connTarget);
+    });
+  });
+  $$('.conn-reorder', el).forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      State.reorderConnection(nodeId, btn.dataset.connTarget, btn.dataset.dir);
+    });
+  });
+  $$('.connection-card[data-nav-node]', el).forEach((card) => {
+    card.addEventListener('click', (e) => {
+      if (e.target.classList.contains('conn-delete') || e.target.classList.contains('conn-reorder') || e.target.classList.contains('conn-label-input')) return;
+      const targetId = card.dataset.navNode;
+      State.setSelectedNodeId(targetId);
+      show('node', targetId);
+    });
+  });
+
+  const startBtn = $('#insp-set-start');
+  if (startBtn) {
+    startBtn.addEventListener('click', () => State.setStartNode(nodeId));
+  }
+  $('#insp-duplicate').addEventListener('click', () => {
+    const dup = State.duplicateNode(nodeId);
+    if (dup) {
+      State.setSelectedNodeId(dup.id);
+      show('node', dup.id);
+    }
+  });
+  $('#insp-node-delete').addEventListener('click', () => {
+    State.deleteNode(nodeId);
+    clear();
   });
 }

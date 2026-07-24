@@ -23,13 +23,21 @@ const NPC_COLORS = [
 ];
 
 // ─── STATE ───────────────────────────────────────────
+/** Empty story map (global quest-structure canvas). Fixed id so camera cache works. */
+function makeEmptyStory() {
+  return { id: 'story', startNodeId: null, nodes: [] };
+}
+
 let state = {
   npcs: [],
   quests: [],
   dialogues: [],
+  story: makeEmptyStory(),
 };
 
 let activeDialogueId = null;
+// View mode: 'dialogue' (edit active dialogue) | 'story' (global story map)
+let viewMode = localStorage.getItem('df_viewMode') === 'story' ? 'story' : 'dialogue';
 let selectedNodeIds = new Set();
 let dirty = false;
 let currentFilePath = null;
@@ -123,6 +131,27 @@ export function getActiveDialogueId() {
 
 export function getActiveDialogue() {
   return state.dialogues.find((d) => d.id === activeDialogueId) || null;
+}
+
+export function getViewMode() {
+  return viewMode;
+}
+
+export function setViewMode(mode) {
+  if (mode !== 'dialogue' && mode !== 'story') return;
+  if (mode === viewMode) return;
+  viewMode = mode;
+  selectedNodeIds.clear();
+  try { localStorage.setItem('df_viewMode', mode); } catch (e) {}
+}
+
+/** The graph the canvas is editing: the story map in story mode, else the active dialogue. */
+export function getActiveGraph() {
+  return viewMode === 'story' ? state.story : getActiveDialogue();
+}
+
+export function getStory() {
+  return state.story;
 }
 
 export function getSelectedNodeId() {
@@ -224,6 +253,10 @@ export function deleteNPC(id) {
       if (node.npcId === id) node.npcId = null;
     });
   });
+  // Remove from quest "Relacionados" lists
+  state.quests.forEach((q) => {
+    if (Array.isArray(q.npcIds)) q.npcIds = q.npcIds.filter((nid) => nid !== id);
+  });
   emitChange();
 }
 
@@ -247,10 +280,35 @@ export function reorderList(collection, fromIndex, toIndex) {
 // ─── QUEST CRUD ──────────────────────────────────────
 export function addQuest(name) {
   pushUndo();
-  const quest = { id: uid(), name, comment: '' };
+  const quest = { id: uid(), name, comment: '', npcIds: [] };
   state.quests.push(quest);
   emitChange();
   return quest;
+}
+
+export function getQuest(id) {
+  return state.quests.find((q) => q.id === id) || null;
+}
+
+/** Add an NPC to a quest's "Relacionados" list */
+export function addNpcToQuest(questId, npcId) {
+  const quest = state.quests.find((q) => q.id === questId);
+  if (!quest || !npcId) return;
+  if (!Array.isArray(quest.npcIds)) quest.npcIds = [];
+  if (quest.npcIds.includes(npcId)) return;
+  pushUndo();
+  quest.npcIds.push(npcId);
+  emitChange();
+}
+
+/** Remove an NPC from a quest's "Relacionados" list */
+export function removeNpcFromQuest(questId, npcId) {
+  const quest = state.quests.find((q) => q.id === questId);
+  if (!quest || !Array.isArray(quest.npcIds)) return;
+  if (!quest.npcIds.includes(npcId)) return;
+  pushUndo();
+  quest.npcIds = quest.npcIds.filter((id) => id !== npcId);
+  emitChange();
 }
 
 export function updateQuest(id, name) {
@@ -278,6 +336,10 @@ export function deleteQuest(id) {
   state.quests = state.quests.filter((q) => q.id !== id);
   state.dialogues.forEach((d) => {
     if (d.questId === id) d.questId = null;
+  });
+  // Clear the quest from story map nodes
+  (state.story?.nodes || []).forEach((n) => {
+    if (n.questId === id) n.questId = null;
   });
   emitChange();
 }
@@ -329,31 +391,35 @@ export function deleteDialogue(id) {
   emitChange();
 }
 
-// ─── NODE CRUD ───────────────────────────────────────
+// ─── NODE CRUD (operates on the active graph: dialogue or story map) ──
 export function addNode(x, y) {
-  const dlg = getActiveDialogue();
+  const dlg = getActiveGraph();
   if (!dlg) return null;
 
+  const isStory = viewMode === 'story';
   pushUndo();
   const node = {
     id: uid(),
     text: newText(),
     x,
     y,
-    width: 240,
+    width: isStory ? 320 : 240,
     height: null, // null = auto height
     npcId: null,
     connections: [],
     condition: '',
     action: '',
   };
+  if (isStory) node.questId = null;
   dlg.nodes.push(node);
+  // First node of the story map becomes the start automatically
+  if (!dlg.startNodeId) dlg.startNodeId = node.id;
   emitChange();
   return node;
 }
 
 export function updateNodeText(nodeId, textObj) {
-  const dlg = getActiveDialogue();
+  const dlg = getActiveGraph();
   if (!dlg) return;
   const node = dlg.nodes.find((n) => n.id === nodeId);
   if (node) {
@@ -366,7 +432,7 @@ export function updateNodeText(nodeId, textObj) {
 }
 
 export function updateNodePosition(nodeId, x, y) {
-  const dlg = getActiveDialogue();
+  const dlg = getActiveGraph();
   if (!dlg) return;
   const node = dlg.nodes.find((n) => n.id === nodeId);
   if (node) {
@@ -378,7 +444,7 @@ export function updateNodePosition(nodeId, x, y) {
 }
 
 export function updateNodeSize(nodeId, width, height) {
-  const dlg = getActiveDialogue();
+  const dlg = getActiveGraph();
   if (!dlg) return;
   const node = dlg.nodes.find((n) => n.id === nodeId);
   if (node) {
@@ -401,7 +467,7 @@ export function updateNodeNPC(nodeId, npcId) {
 }
 
 export function deleteNode(nodeId) {
-  const dlg = getActiveDialogue();
+  const dlg = getActiveGraph();
   if (!dlg) return;
 
   pushUndo();
@@ -426,7 +492,7 @@ export function deleteNode(nodeId) {
 }
 
 export function duplicateNode(nodeId) {
-  const dlg = getActiveDialogue();
+  const dlg = getActiveGraph();
   if (!dlg) return null;
   const original = dlg.nodes.find((n) => n.id === nodeId);
   if (!original) return null;
@@ -444,16 +510,26 @@ export function duplicateNode(nodeId) {
     condition: original.condition || '',
     action: original.action || '',
   };
+  if (original.questId !== undefined) newNode.questId = original.questId;
   dlg.nodes.push(newNode);
   emitChange();
   return newNode;
 }
 
 export function setStartNode(nodeId) {
-  const dlg = getActiveDialogue();
+  const dlg = getActiveGraph();
   if (!dlg) return;
   pushUndo();
   dlg.startNodeId = nodeId;
+  emitChange();
+}
+
+/** Assign a quest to a story map node */
+export function updateStoryNodeQuest(nodeId, questId) {
+  const node = state.story.nodes.find((n) => n.id === nodeId);
+  if (!node) return;
+  pushUndo();
+  node.questId = questId || null;
   emitChange();
 }
 
@@ -489,7 +565,7 @@ export function normalizeConnection(c) {
 
 /** Devuelve las conexiones de un nodo normalizadas como [{targetId, label}] */
 export function getConnections(nodeId) {
-  const dlg = getActiveDialogue();
+  const dlg = getActiveGraph();
   if (!dlg) return [];
   const node = dlg.nodes.find((n) => n.id === nodeId);
   if (!node) return [];
@@ -497,7 +573,7 @@ export function getConnections(nodeId) {
 }
 
 export function addConnection(sourceNodeId, targetNodeId) {
-  const dlg = getActiveDialogue();
+  const dlg = getActiveGraph();
   if (!dlg) return;
   const source = dlg.nodes.find((n) => n.id === sourceNodeId);
   if (!source) return;
@@ -517,7 +593,7 @@ export function addConnection(sourceNodeId, targetNodeId) {
 }
 
 export function removeConnection(sourceNodeId, targetNodeId) {
-  const dlg = getActiveDialogue();
+  const dlg = getActiveGraph();
   if (!dlg) return;
   const source = dlg.nodes.find((n) => n.id === sourceNodeId);
   if (!source) return;
@@ -530,7 +606,7 @@ export function removeConnection(sourceNodeId, targetNodeId) {
 }
 
 export function reorderConnection(sourceNodeId, targetNodeId, direction) {
-  const dlg = getActiveDialogue();
+  const dlg = getActiveGraph();
   if (!dlg) return;
   const source = dlg.nodes.find((n) => n.id === sourceNodeId);
   if (!source) return;
@@ -549,7 +625,7 @@ export function reorderConnection(sourceNodeId, targetNodeId, direction) {
 }
 
 export function updateConnectionLabel(sourceNodeId, targetNodeId, label) {
-  const dlg = getActiveDialogue();
+  const dlg = getActiveGraph();
   if (!dlg) return;
   const source = dlg.nodes.find((n) => n.id === sourceNodeId);
   if (!source) return;
@@ -564,6 +640,24 @@ export function updateConnectionLabel(sourceNodeId, targetNodeId, label) {
 }
 
 // ─── PERSISTENCE ─────────────────────────────────────
+
+/** Normalize a loaded story map + quest npcIds (legacy files may lack them). */
+function normalizeLoadedExtras(parsed) {
+  // Quests: ensure npcIds array
+  state.quests.forEach((q) => {
+    if (!Array.isArray(q.npcIds)) q.npcIds = [];
+  });
+  // Story map: ensure shape + normalized connections
+  const story = parsed && parsed.story ? parsed.story : null;
+  state.story = story && Array.isArray(story.nodes)
+    ? { id: 'story', startNodeId: story.startNodeId || null, nodes: story.nodes }
+    : makeEmptyStory();
+  state.story.nodes.forEach((node) => {
+    if (node.questId === undefined) node.questId = null;
+    node.connections = (node.connections || []).map(normalizeConnection);
+  });
+}
+
 export function save() {
   localStorage.setItem('dialogueForge_data', JSON.stringify(state));
   dirty = false;
@@ -582,7 +676,9 @@ export function load() {
         npcs: parsed.npcs || [],
         quests: parsed.quests || [],
         dialogues: parsed.dialogues || [],
+        story: makeEmptyStory(),
       };
+      normalizeLoadedExtras(parsed);
       // Migrate old format: convert options to connections & add Narrative Tales fields
       state.dialogues.forEach((dlg) => {
         dlg.nodes.forEach((node) => {
@@ -608,7 +704,7 @@ export function load() {
         });
       });
     } catch {
-      state = { npcs: [], quests: [], dialogues: [] };
+      state = { npcs: [], quests: [], dialogues: [], story: makeEmptyStory() };
     }
   }
 
@@ -643,7 +739,9 @@ export function importJSON(file) {
             npcs: data.npcs || [],
             quests: data.quests || [],
             dialogues: data.dialogues || [],
+            story: makeEmptyStory(),
           };
+          normalizeLoadedExtras(data);
           // Migrate Narrative Tales fields
           state.dialogues.forEach((dlg) => {
             dlg.nodes.forEach((node) => {
@@ -731,7 +829,9 @@ export async function loadFromFile() {
         npcs: data.npcs || [],
         quests: data.quests || [],
         dialogues: data.dialogues || [],
+        story: makeEmptyStory(),
       };
+      normalizeLoadedExtras(data);
       // Normalize connections in all nodes
       state.dialogues.forEach((dlg) => {
         dlg.nodes.forEach((node) => {

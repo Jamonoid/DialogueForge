@@ -25,8 +25,14 @@ function renderAll() {
   Inspector.render();
   Chat.onStateChange();
 
-  // Disable AI toolbar buttons when no dialogue is active
-  const hasDlg = !!State.getActiveDialogue();
+  // Sync view tabs (Diálogo / Historia)
+  const mode = State.getViewMode();
+  $$('#view-tabs .view-tab').forEach((tab) => {
+    tab.classList.toggle('active', tab.dataset.view === mode);
+  });
+
+  // Disable AI toolbar buttons when no dialogue is active (or in story view)
+  const hasDlg = !!State.getActiveDialogue() && mode === 'dialogue';
   const translateBtn = $('#btn-ai-translate-all');
   const generateBtn = $('#btn-ai-generate');
   if (translateBtn) { translateBtn.disabled = !hasDlg; translateBtn.style.opacity = hasDlg ? '' : '0.4'; }
@@ -40,11 +46,33 @@ function renderAll() {
 State.onChange(() => renderAll());
 
 Sidebar.onSelect((type, id) => {
+  // Selecting a dialogue always returns to the dialogue editor view
   if (type === 'dialogue') {
+    State.setViewMode('dialogue');
     Inspector.show('dialogue', id);
   } else {
     Inspector.show(type, id);
   }
+  renderAll();
+});
+
+// ─── VIEW TABS (Diálogo / Historia) ──────────────────
+$$('#view-tabs .view-tab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    if (State.getViewMode() === tab.dataset.view) return;
+    State.setViewMode(tab.dataset.view);
+    Inspector.clear();
+    renderAll();
+  });
+});
+
+// Navigation from the story inspector ("Relacionados" → open dialogue)
+document.addEventListener('df-open-dialogue', (e) => {
+  const id = e.detail?.id;
+  if (!id) return;
+  State.setActiveDialogueId(id);
+  State.setViewMode('dialogue');
+  Inspector.show('dialogue', id);
   renderAll();
 });
 
@@ -166,10 +194,10 @@ function setupKeyboard() {
       State.redo();
     }
 
-    // Ctrl+A → select all nodes in active dialogue
+    // Ctrl+A → select all nodes in the active graph (dialogue or story map)
     if (e.ctrlKey && e.key === 'a' && !isInput) {
       e.preventDefault();
-      const dlg = State.getActiveDialogue();
+      const dlg = State.getActiveGraph();
       if (dlg && dlg.nodes.length > 0) {
         State.clearSelection();
         dlg.nodes.forEach((n) => State.addToSelection(n.id));

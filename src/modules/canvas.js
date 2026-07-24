@@ -50,16 +50,23 @@ export function onCanvasClick(cb) { onCanvasClickCallback = cb; }
 
 // ─── RENDER ──────────────────────────────────────────
 export function render() {
-  const dlg = State.getActiveDialogue();
+  const isStory = State.getViewMode() === 'story';
+  const dlg = State.getActiveGraph();
   const nodesLayer = $('#nodes-layer');
   const connectionsGroup = $('#connections-group');
   const emptyState = $('#canvas-empty');
   const controls = $('#canvas-controls');
   const addBtn = $('#btn-add-node');
 
+  // Empty-state texts differ per view (story map always exists but may have 0 nodes)
+  const emptyTitle = emptyState.querySelector('h3');
+  const emptyText = emptyState.querySelector('p');
+
   if (!dlg) {
     nodesLayer.innerHTML = '';
     connectionsGroup.innerHTML = '';
+    if (emptyTitle) emptyTitle.textContent = 'Sin diálogo seleccionado';
+    if (emptyText) emptyText.textContent = 'Selecciona o crea un diálogo en la barra lateral';
     emptyState.style.display = '';
     controls.style.display = 'none';
     addBtn.style.display = 'none';
@@ -73,11 +80,7 @@ export function render() {
     return;
   }
 
-  emptyState.style.display = 'none';
-  controls.style.display = '';
-  addBtn.style.display = '';
-
-  // Q10: Restore camera when switching dialogues
+  // Q10: Restore camera when switching dialogues (or dialogue ⇄ story map)
   const currentDlgId = dlg.id;
   if (currentDlgId !== lastDialogueId) {
     if (cameraCache[currentDlgId]) {
@@ -91,6 +94,23 @@ export function render() {
     }
     lastDialogueId = currentDlgId;
   }
+
+  // Story map with no nodes yet: keep controls + add button, show a hint
+  if (isStory && dlg.nodes.length === 0) {
+    nodesLayer.innerHTML = '';
+    connectionsGroup.innerHTML = '';
+    if (emptyTitle) emptyTitle.textContent = 'Mapa de historia vacío';
+    if (emptyText) emptyText.textContent = 'Agrega tu primera quest con el botón + o clic derecho en el lienzo';
+    emptyState.style.display = '';
+    controls.style.display = '';
+    addBtn.style.display = '';
+    applyTransform();
+    return;
+  }
+
+  emptyState.style.display = 'none';
+  controls.style.display = '';
+  addBtn.style.display = '';
 
   renderNodes(dlg, nodesLayer);
   applyTransform();
@@ -114,7 +134,8 @@ export function render() {
 }
 
 export function renderConnections() {
-  const dlg = State.getActiveDialogue();
+  const isStory = State.getViewMode() === 'story';
+  const dlg = State.getActiveGraph();
   const connectionsGroup = $('#connections-group');
   if (!dlg) {
     connectionsGroup.innerHTML = '';
@@ -124,6 +145,19 @@ export function renderConnections() {
   const container = $('#canvas-container');
   const containerRect = container.getBoundingClientRect();
   let paths = '';
+  let labels = '';
+
+  // Escape for SVG text content
+  const escSvg = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  // Effective canvas scale for label sizing — read from the live CSS transform
+  // of the nodes layer (the same scale the node text uses), so the labels
+  // always grow/shrink with the world zoom.
+  let labelScale = zoom;
+  try {
+    const m = new DOMMatrix(getComputedStyle($('#nodes-layer')).transform);
+    if (m && m.a) labelScale = m.a;
+  } catch (e) {}
 
   dlg.nodes.forEach((node) => {
     if (!node.connections) return;
@@ -150,12 +184,50 @@ export function renderConnections() {
       const pathD = `M ${x1} ${y1} C ${x1} ${y1 + dy}, ${x2} ${y2 - dy}, ${x2} ${y2}`;
 
       // Invisible fat path for easier clicking + visible thin path
-      paths += `<path d="${pathD}" stroke="transparent" stroke-width="16" fill="none" data-source="${node.id}" data-target="${conn.targetId}" class="conn-hitarea"><title>Doble clic: eliminar · Clic derecho: opciones</title></path>`;
+      const hitTitle = isStory ? 'Doble clic: editar condición · Clic derecho: opciones' : 'Doble clic: eliminar · Clic derecho: opciones';
+      paths += `<path d="${pathD}" stroke="transparent" stroke-width="16" fill="none" data-source="${node.id}" data-target="${conn.targetId}" class="conn-hitarea"><title>${hitTitle}</title></path>`;
       paths += `<path d="${pathD}" stroke="var(--accent-primary)" stroke-width="2" fill="none" opacity="0.6" class="conn-visible" data-source="${node.id}" data-target="${conn.targetId}"/>`;
+
+      // Story map: always draw a label at the bezier midpoint — the condition
+      // text if set, or a clickable "＋ condición" placeholder to add one.
+      if (isStory) {
+        // Bezier point at t=0.5 (control points cancel out → simple midpoint)
+        const mx = (x1 + x2) / 2;
+        const my = (y1 + y2) / 2;
+        // Fully proportional to the world zoom (like node text) — no floor,
+        // so it shrinks away when zoomed far out instead of dominating the view.
+        const fontSize = Math.round(15 * labelScale * 10) / 10;
+        const isEmpty = !conn.label;
+        // Wrap long labels into lines of ~28 chars
+        const words = (isEmpty ? '＋ condición' : conn.label).split(/\s+/);
+        const lines = [];
+        let line = '';
+        words.forEach((w) => {
+          if ((line + ' ' + w).trim().length > 28) { if (line) lines.push(line); line = w; }
+          else line = (line + ' ' + w).trim();
+        });
+        if (line) lines.push(line);
+        const lineH = fontSize * 1.25;
+        const startY = my - ((lines.length - 1) * lineH) / 2;
+        const tspans = lines.map((l, i) =>
+          `<tspan x="${mx}" y="${startY + i * lineH}">${escSvg(l)}</tspan>`
+        ).join('');
+        labels += `<text class="conn-label ${isEmpty ? 'conn-label-empty' : ''}" text-anchor="middle" style="font-size:${fontSize}px;stroke-width:${Math.round(fontSize * 0.3 * 10) / 10}px" data-source="${node.id}" data-target="${conn.targetId}"><title>Clic para editar la condición</title>${tspans}</text>`;
+      }
     });
   });
 
-  connectionsGroup.innerHTML = paths;
+  connectionsGroup.innerHTML = paths + labels;
+
+  // Label click → edit (story map)
+  connectionsGroup.querySelectorAll('.conn-label').forEach((labelEl) => {
+    labelEl.style.cursor = 'pointer';
+    labelEl.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      editConnectionLabel(labelEl.dataset.source, labelEl.dataset.target);
+    });
+  });
 
   // Right-click and hover on connections
   connectionsGroup.querySelectorAll('.conn-hitarea').forEach((path) => {
@@ -179,10 +251,14 @@ export function renderConnections() {
       connectionsGroup.querySelectorAll('.conn-visible').forEach((p) => { p.setAttribute('stroke-width', '2'); p.setAttribute('opacity', '0.6'); });
     });
 
-    // Double-click on a cable → delete it
+    // Double-click on a cable → edit label (story map) / delete (dialogue)
     path.addEventListener('dblclick', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (State.getViewMode() === 'story') {
+        editConnectionLabel(path.dataset.source, path.dataset.target);
+        return;
+      }
       State.removeConnection(path.dataset.source, path.dataset.target);
       toast('Conexión eliminada', 'info');
     });
@@ -192,18 +268,48 @@ export function renderConnections() {
       e.stopPropagation();
       const sourceId = path.dataset.source;
       const targetId = path.dataset.target;
-      showContextMenu(e.clientX, e.clientY, [
-        {
-          label: 'Eliminar conexión',
-          action: 'delete-conn',
-          danger: true,
-          handler: () => {
-            State.removeConnection(sourceId, targetId);
-          },
+      const menuItems = [];
+      if (State.getViewMode() === 'story') {
+        menuItems.push({
+          label: '✎ Editar etiqueta',
+          action: 'edit-label',
+          handler: () => editConnectionLabel(sourceId, targetId),
+        });
+      }
+      menuItems.push({
+        label: 'Eliminar conexión',
+        action: 'delete-conn',
+        danger: true,
+        handler: () => {
+          State.removeConnection(sourceId, targetId);
         },
-      ]);
+      });
+      showContextMenu(e.clientX, e.clientY, menuItems);
     });
   });
+}
+
+/** Edit the label of a connection (story map: the condition for the next quest). */
+function editConnectionLabel(sourceId, targetId) {
+  const dlg = State.getActiveGraph();
+  if (!dlg) return;
+  const source = dlg.nodes.find((n) => n.id === sourceId);
+  if (!source) return;
+  const conn = (source.connections || []).map(normalizeConnection).find((c) => c.targetId === targetId);
+  showModal(
+    'Etiqueta de la conexión',
+    [{
+      key: 'label',
+      label: 'Condición / etiqueta',
+      type: 'textarea',
+      value: conn ? conn.label : '',
+      placeholder: 'Ej: Aquí puedo escribir la condición para que la quest empiece',
+    }],
+    (vals) => {
+      State.pushUndoCheckpoint();
+      updateConnectionLabel(sourceId, targetId, vals.label || '');
+    }
+  );
 }
 
 export function applyTransform() {
@@ -219,10 +325,10 @@ export function applyTransform() {
   const label = $('#zoom-label');
   if (label) label.textContent = Math.round(zoom * 100) + '%';
 
-  // Q10: Save camera position for current dialogue
-  const dlgId = State.getActiveDialogueId();
-  if (dlgId) {
-    cameraCache[dlgId] = { x: offset.x, y: offset.y, zoom };
+  // Q10: Save camera position for current graph (dialogue or story map)
+  const graph = State.getActiveGraph();
+  if (graph) {
+    cameraCache[graph.id] = { x: offset.x, y: offset.y, zoom };
   }
 }
 
@@ -236,6 +342,7 @@ export function setup() {
     if (e.button !== 0) return;
     if (e.target.closest('.dialogue-node') || e.target.closest('.canvas-controls') || e.target.closest('.canvas-add-btn')) return;
     if (e.target.classList && e.target.classList.contains('conn-hitarea')) return; // clicking a cable shouldn't pan (allows dblclick delete)
+    if (e.target.closest && e.target.closest('.conn-label')) return; // clicking a connection label shouldn't pan (allows click-to-edit)
 
     if (e.shiftKey) {
       // Shift+drag → selection rectangle
@@ -309,7 +416,7 @@ export function setup() {
       const sh = Math.abs(e.clientY - selectionStart.y) / zoom;
 
       // Find nodes inside the rectangle
-      const dlg = State.getActiveDialogue();
+      const dlg = State.getActiveGraph();
       if (dlg && sw > 5 && sh > 5) {
         State.clearSelection();
         dlg.nodes.forEach((node) => {
@@ -391,7 +498,7 @@ export function setup() {
 
   // FAB add node
   $('#btn-add-node').addEventListener('click', () => {
-    const dlg = State.getActiveDialogue();
+    const dlg = State.getActiveGraph();
     if (!dlg) return;
     const rect = container.getBoundingClientRect();
     const cx = (rect.width / 2 - offset.x) / zoom;
@@ -410,7 +517,7 @@ function resetView() { zoom = 1; offset.x = 0; offset.y = 0; applyTransform(); r
 
 // ─── AUTO-LAYOUT (BFS jerárquico centrado y sin solapamientos) ───────────
 export function autoLayout() {
-  const dlg = State.getActiveDialogue();
+  const dlg = State.getActiveGraph();
   if (!dlg || dlg.nodes.length === 0) return;
 
   const NODE_W = 260;
@@ -585,7 +692,7 @@ export function autoLayout() {
 }
 
 function fitView() {
-  const dlg = State.getActiveDialogue();
+  const dlg = State.getActiveGraph();
   if (!dlg || dlg.nodes.length === 0) { resetView(); return; }
   const container = $('#canvas-container');
   const rect = container.getBoundingClientRect();

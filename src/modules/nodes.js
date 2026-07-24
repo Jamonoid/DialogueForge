@@ -32,6 +32,7 @@ let activeDlg = null;
 // ─── RENDER NODES ────────────────────────────────────
 export function renderNodes(dlg, container) {
   const lang = getLang();
+  const isStory = dlg.id === 'story';
 
   container.innerHTML = dlg.nodes
     .map((node) => {
@@ -42,10 +43,11 @@ export function renderNodes(dlg, container) {
       const connCount = node.connections ? node.connections.length : 0;
       const isMultiBranch = connCount >= 2;
 
-      // NPC color
-      const npcColor = State.getNPCColor(node.npcId);
-      const npc = node.npcId ? State.getNPC(node.npcId) : null;
+      // NPC color (dialogue view) / quest (story view)
+      const npcColor = isStory ? null : State.getNPCColor(node.npcId);
+      const npc = !isStory && node.npcId ? State.getNPC(node.npcId) : null;
       const npcName = npc ? npc.name : null;
+      const quest = isStory && node.questId ? State.getQuest(node.questId) : null;
 
       // Convert hex color to rgba for backgrounds
       const hexToRgba = (hex, alpha) => {
@@ -64,19 +66,26 @@ export function renderNodes(dlg, container) {
       // (gold ring + halo) must win, and inline styles beat any class rule.
       if (npcColor && !isSelected) nodeStyle += ` border-color: ${npcColor};`;
 
-      const placeholderText = lang === 'es' ? 'Escribe el diálogo...' : 'Write dialogue...';
+      const placeholderText = isStory
+        ? (lang === 'es' ? 'Describe la quest / paso de la historia...' : 'Describe the quest / story step...')
+        : (lang === 'es' ? 'Escribe el diálogo...' : 'Write dialogue...');
+
+      // Header badge: quest name in story view, NPC name in dialogue view
+      const badgeText = isStory
+        ? (quest ? esc(quest.name) : 'SIN QUEST')
+        : (isStart ? 'INICIO' : (npcName ? esc(npcName) : 'NODO'));
 
       return `
-      <div class="dialogue-node ${isStart && !npcColor ? 'start-node' : ''} ${isSelected ? 'selected' : ''}"
+      <div class="dialogue-node ${isStory ? 'story-node' : ''} ${isStart && !npcColor ? 'start-node' : ''} ${isSelected ? 'selected' : ''}"
            data-node-id="${node.id}"
            style="${nodeStyle}">
         ${isStart ? '<div class="node-start-indicator" title="Nodo inicial">▶</div>' : ''}
         <div class="node-input-connector" data-input-node="${node.id}" title="Soltar un cable aquí, o arrastrar para conectar desde otro nodo" ${npcColor ? `style="border-color: ${npcColor}"` : ''}></div>
         <div class="node-header" ${npcColor ? `style="background: ${hexToRgba(npcColor, 0.1)}; border-bottom-color: ${hexToRgba(npcColor, 0.2)};"` : ''}>
-          <span class="node-type-badge" ${npcColor ? `style="background: ${hexToRgba(npcColor, 0.15)}; color: ${npcColor};"` : ''}>${isStart ? 'INICIO' : (npcName ? esc(npcName) : 'NODO')}</span>
+          <span class="node-type-badge ${isStory && !quest ? 'no-quest' : ''}" ${npcColor ? `style="background: ${hexToRgba(npcColor, 0.15)}; color: ${npcColor};"` : ''}>${badgeText}</span>
           <div class="node-metadata-badges">
-            ${node.condition ? `<span class="meta-badge condition" title="Condición: ${node.condition}">IF</span>` : ''}
-            ${node.action ? `<span class="meta-badge action" title="Acción: ${node.action}">DO</span>` : ''}
+            ${!isStory && node.condition ? `<span class="meta-badge condition" title="Condición: ${esc(node.condition)}">IF</span>` : ''}
+            ${!isStory && node.action ? `<span class="meta-badge action" title="Acción: ${esc(node.action)}">DO</span>` : ''}
           </div>
           <span class="node-lang-badge">${lang.toUpperCase()}</span>
           <span class="node-id">#${node.id.slice(-5)}</span>

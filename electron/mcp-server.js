@@ -35,7 +35,7 @@ function buildServer(exec) {
   // ── Read tools ──
   register(
     'get_project_summary',
-    'Overview of the whole Dialogue Forge project: NPCs, quests, and dialogues (with node counts and which one is active on the canvas). Each item includes its author comment ("comment") — context notes like when a dialogue triggers or who an NPC is.',
+    'Overview of the whole Dialogue Forge project: NPCs, quests (with their related NPC names), dialogues (with node counts and which one is active on the canvas), and a storyMap node count (read the full graph with get_story_map). Each item includes its author comment ("comment") — context notes like when a dialogue triggers or who an NPC is.',
     {},
   );
   register(
@@ -50,6 +50,11 @@ function buildServer(exec) {
     'validate_dialogue',
     'Cheap structural check of a dialogue: unreachable nodes, connections pointing to missing nodes, nodes with empty Spanish/English text, and endings (nodes without outgoing connections — informational). Returns ok:false when the tree is broken.',
     { dialogue_id: dialogueIdParam },
+  );
+  register(
+    'get_story_map',
+    'Read the global story map: the quest-structure graph the author draws in the "Historia" view. Returns nodes {id, quest, es, en?} (quest = quest name or null), "edges" as [from, to, condition?] tuples where the third element is the CONDITION for that next quest/step to start, "start" (entry node id), and "quests" — per quest referenced in the map: its author note plus related NPCs and dialogues (the "Relacionados" the author curated). Use this to understand the overall story order and quest gating before writing dialogues.',
+    {},
   );
 
   // ── Whole-graph writer (preferred for creating or rewriting dialogue trees) ──
@@ -194,6 +199,88 @@ function buildServer(exec) {
       type: z.enum(['npc', 'quest', 'dialogue']).describe('Kind of item to annotate'),
       id: z.string().describe('ID of the NPC / quest / dialogue'),
       comment: z.string().describe('The author note (empty string clears it)'),
+    },
+  );
+
+  // ── Story map tools (global quest-structure graph, "Historia" view) ──
+  register(
+    'write_story_map',
+    'Write the whole story map in ONE call: nodes + connections + start, using your own temp ids ("n1", "n2"...). Each node optionally links a quest by name (created if missing). Each connection carries the CONDITION for the target quest/step to start. mode "replace" (default) rewrites the map; "append" adds to it (connections may then also reference real existing node ids). The graph is validated before any mutation (atomic) and auto-laid-out. Returns idMap (temp id → real id). Preferred over N×add_story_node calls.',
+    {
+      mode: z.enum(['replace', 'append']).optional().describe('replace (default): rewrite the map; append: add to it'),
+      nodes: z.array(z.object({
+        id: z.string().describe('Your temp id ("n1") — mapped to a real id in the returned idMap'),
+        quest: z.string().optional().describe('Quest name this story step belongs to (created if missing)'),
+        text_es: z.string().optional().describe('Step description in Spanish'),
+        text_en: z.string().optional().describe('Step description in English'),
+      })).describe('All story steps'),
+      connections: z.array(z.object({
+        from: z.string().describe('Temp id (or real node id in append mode)'),
+        to: z.string().describe('Temp id (or real node id in append mode)'),
+        condition: z.string().optional().describe('Condition for the target quest/step to start (drawn on the arrow)'),
+      })).optional().describe('Directed edges of the story'),
+      start: z.string().optional().describe('Temp id of the entry step; defaults to the first node'),
+    },
+  );
+  register(
+    'add_story_node',
+    'Add ONE node to the story map, optionally linked to a quest (created if missing). Returns the real node id — use it for connect_story_nodes. For several nodes, prefer write_story_map.',
+    {
+      quest: z.string().optional().describe('Quest name for this step (created if missing)'),
+      text_es: z.string().optional().describe('Step description in Spanish'),
+      text_en: z.string().optional().describe('Step description in English'),
+      x: z.number().optional(),
+      y: z.number().optional(),
+    },
+  );
+  register(
+    'update_story_node',
+    'Update a story map node: its quest and/or description. Only the provided fields change (quest accepts "" to unlink).',
+    {
+      node_id: z.string(),
+      quest: z.string().optional().describe('Quest name (created if missing); empty string unlinks'),
+      text_es: z.string().optional(),
+      text_en: z.string().optional(),
+    },
+  );
+  register(
+    'delete_story_node',
+    'Delete a story map node (and every connection pointing at it).',
+    { node_id: z.string() },
+  );
+  register(
+    'connect_story_nodes',
+    'Create a directed connection between two story nodes (from → to). "condition" is the requirement for the target quest/step to start — it is drawn on the arrow. If the connection already exists, it just updates the condition.',
+    {
+      from: z.string(),
+      to: z.string(),
+      condition: z.string().optional().describe('Condition for the target step to start (empty string clears)'),
+    },
+  );
+  register(
+    'disconnect_story_nodes',
+    'Remove the directed connection from → to between two story nodes.',
+    { from: z.string(), to: z.string() },
+  );
+  register(
+    'set_story_start',
+    'Mark a story map node as the entry point of the story.',
+    { node_id: z.string() },
+  );
+  register(
+    'validate_story',
+    'Structural check of the story map: unreachable steps, broken connections, missing ES/EN descriptions, endings, plus story-specific hints — nodes without a quest assigned and edges without a start condition. Returns ok:false when the graph is broken.',
+    {},
+  );
+  register(
+    'update_quest_relations',
+    'Edit the "Relacionados" of a quest (shared by every story node of that quest): add/remove related NPCs (by name; created if missing on add) and add/remove related dialogues (by id or exact title). Adding a dialogue assigns its quest; removing clears it.',
+    {
+      quest_name: z.string().describe('Quest name (created if missing)'),
+      add_npcs: z.array(z.string()).optional().describe('NPC names to relate'),
+      remove_npcs: z.array(z.string()).optional().describe('NPC names to unrelate'),
+      add_dialogues: z.array(z.string()).optional().describe('Dialogue ids or exact titles to assign to this quest'),
+      remove_dialogues: z.array(z.string()).optional().describe('Dialogue ids or exact titles to unassign'),
     },
   );
 

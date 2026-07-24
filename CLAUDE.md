@@ -66,7 +66,7 @@ Nodes contain a `<textarea>` that allows direct inline text editing on the canva
 ```js
 {
   npcs: [{ id, name, color, comment }],
-  quests: [{ id, name, comment }],
+  quests: [{ id, name, comment, npcIds: [] }],   // npcIds = related NPCs ("Relacionados")
   dialogues: [{
     id, title, npcId, questId, comment, startNodeId,
     nodes: [{
@@ -76,11 +76,33 @@ Nodes contain a `<textarea>` that allows direct inline text editing on the canva
       npcId,
       connections: [{ targetId: string, label: string }, ...]  // Normalized connection objects
     }]
-  }]
+  }],
+  story: {              // Global story map ("Historia" view) — same graph shape as a dialogue
+    id: 'story',        // fixed id (used as the camera-cache key)
+    startNodeId,
+    nodes: [{ id, text: {es,en}, questId, x, y, width, height, connections: [{ targetId, label }] }]
+    // connection label = the CONDITION for the target quest/step to start (drawn on the arrow)
+  }
 }
 ```
 
 > **IMPORTANT**: Connections are always objects `{ targetId, label }`, never plain strings. Use `normalizeConnection(c)` from `state.js` when reading connections to handle any legacy string format. Never use `.includes(nodeId)` on connections arrays — use `.some(c => normalizeConnection(c).targetId === nodeId)`.
+
+Legacy save files without `story`/`npcIds` are migrated on load (`normalizeLoadedExtras()` in `state.js` — called from `load()`, `importJSON()` and `loadFromFile()`); the save format is a strict superset of the old one.
+
+#### View Mode & Story Map ("Historia")
+The canvas has two views, switched with tabs over the canvas (`#view-tabs`): **🗨 Diálogo** (edit the active dialogue) and **🗺 Historia** (a single global quest-structure graph). `state.js` tracks `viewMode` (`'dialogue' | 'story'`, persisted in `localStorage df_viewMode`) and exposes:
+- `getViewMode()` / `setViewMode(mode)` (clears selection)
+- `getActiveGraph()` — **the key abstraction**: returns `state.story` in story mode, else the active dialogue. All node/connection CRUD in `state.js` (`addNode`, `deleteNode`, `addConnection`, `updateConnectionLabel`, ...) and all canvas/nodes interactions operate on `getActiveGraph()`, so drag, connect, multi-select, undo/redo, auto-layout and snap work identically on both graphs.
+- `getStory()`, `updateStoryNodeQuest(nodeId, questId)`, `addNpcToQuest(questId, npcId)`, `removeNpcFromQuest(questId, npcId)`
+
+Story map specifics:
+- Each story node is an independent entity pointing to a quest via `questId` (nullable — the same quest may appear in two nodes for alternate routes). The node header badge shows the quest name (or `SIN QUEST`).
+- **Connection labels are rendered ONLY in story view** (`renderConnections()` in `canvas.js`): every edge draws its label at the bezier midpoint — the condition for the next quest to start — or a "＋ condición" placeholder. Click the label (or double-click the cable) to edit; in dialogue view double-click still deletes the connection and labels stay invisible.
+- **"Relacionados" live on the Quest** (shared between story nodes of the same quest): related NPCs in `quest.npcIds`, related dialogues via the existing `dialogue.questId` (single source of truth — consistent with the sidebar's "Agrupar por Quest"). The story-node inspector (`renderStoryNode()` in `inspector.js`) edits both; clicking a related dialogue navigates to the dialogue editor (custom `df-open-dialogue` event handled in `main.js`).
+- Cascades: `deleteQuest` nulls `questId` on story nodes; `deleteNPC` removes the id from every `quest.npcIds`.
+- The chat executor and MCP dialogue-edit tools switch back to dialogue view before mutating (they rely on `getActiveGraph()`-based CRUD); MCP story tools and read tools mutate `state.story` directly and never switch the view (`VIEW_SAFE_TOOLS` in `mcp-bridge.js`).
+- AI toolbar buttons (translate/generate) are disabled in story view.
 
 #### Selection Model
 Selection uses a `Set<string>` internally (`selectedNodeIds`). The API provides:
@@ -144,10 +166,11 @@ Register once (user scope, available from any repo) while Dialogue Forge is open
 claude mcp add --transport http --scope user dialogue-forge http://127.0.0.1:4747/mcp
 ```
 
-Tools (`src/modules/mcp-bridge.js`). Every edit tool accepts an optional `dialogue_id` (defaults to the **active** dialogue) — no implicit-global-state failures when the active dialogue changes mid-session:
-- **Read**: `get_project_summary`, `get_dialogue` (`format`: `compact` default — nodes with empty fields omitted plus `edges` as `[from, to, label?]` tuples; also `structure` = ids/edges only and `full` = verbose legacy), `validate_dialogue` (unreachable nodes, broken connections, empty ES/EN texts, endings)
-- **Bulk write**: `write_dialogue_graph` — a whole tree (nodes + connections + start) in ONE call with caller temp ids (`"n1"`); returns `idMap` temp→real. With `title` it creates + activates a new dialogue; otherwise `mode: 'replace'` (default, rewrites the target) or `'append'`. The payload is validated before mutating (atomic) and the tree auto-layouts. **Preferred write path** — avoids the N×add_node + M×connect_nodes round-trips.
+Tools (`src/modules/mcp-bridge.js`). Every dialogue edit tool accepts an optional `dialogue_id` (defaults to the **active** dialogue) — no implicit-global-state failures when the active dialogue changes mid-session:
+- **Read**: `get_project_summary` (now includes `relatedNpcs` per quest and a `storyMap` node count), `get_dialogue` (`format`: `compact` default — nodes with empty fields omitted plus `edges` as `[from, to, label?]` tuples; also `structure` = ids/edges only and `full` = verbose legacy), `get_story_map` (story nodes with quest names, `edges` as `[from, to, condition?]`, and per-quest Relacionados), `validate_dialogue` (unreachable nodes, broken connections, empty ES/EN texts, endings), `validate_story` (same checks on the story map + nodes without quest / edges without condition)
+- **Bulk write**: `write_dialogue_graph` — a whole tree (nodes + connections + start) in ONE call with caller temp ids (`"n1"`); returns `idMap` temp→real. With `title` it creates + activates a new dialogue; otherwise `mode: 'replace'` (default, rewrites the target) or `'append'`. The payload is validated before mutating (atomic) and the tree auto-layouts. **Preferred write path** — avoids the N×add_node + M×connect_nodes round-trips. `write_story_map` is its story-map twin (nodes `{id, quest?, text_es?, text_en?}` + connections `{from, to, condition?}`; same replace/append/atomic/auto-layout semantics).
 - **Edit**: `create_dialogue`, `update_dialogue` (title/npc/quest/comment), `delete_dialogue` (requires explicit `dialogue_id`), `clear_dialogue` (leaves one empty start node), `set_active_dialogue`, `add_node` / `update_node` (both accept `condition`/`action` game-logic fields), `connect_nodes` (relabels if the connection already exists), `disconnect_nodes`, `delete_node`, `set_start_node`, `create_npc`, `auto_layout`, `set_comment` (author note on an npc/quest/dialogue)
+- **Story map edit**: `add_story_node` / `update_story_node` (quest by name, created if missing; `""` unlinks), `delete_story_node`, `connect_story_nodes` / `disconnect_story_nodes` (`condition` = the label drawn on the arrow; connect upserts), `set_story_start`, `update_quest_relations` (`add/remove_npcs` by name, `add/remove_dialogues` by id or exact title — adding a dialogue sets its `questId`). Story tools mutate `state.story` directly (inside batches) and are listed in `VIEW_SAFE_TOOLS`, so they never force the view back to the dialogue editor.
 
 Implementation notes: node edits on non-active dialogues mutate state directly inside `startBatch()/endBatch()`. Batches **nest** via a depth counter in `state.js` (only the outermost batch pushes the undo checkpoint / emits the render), so `writeDialogueGraph` can run inside the chat executor's batch. `writeDialogueGraph`, `buildValidationReport` and `clearDialogueContent` are exported from `mcp-bridge.js` and reused by `chat.js`, so chat actions and MCP tools behave identically.
 

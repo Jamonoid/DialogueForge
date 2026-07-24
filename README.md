@@ -14,6 +14,14 @@ Editor visual de árboles de diálogo construido para desarrollo de videojuegos.
 - Multi-selección, duplicación y eliminación en lote de nodos
 - Historial completo de deshacer/rehacer (Ctrl+Z / Ctrl+Y)
 
+### Mapa de Historia (🗺 Historia)
+- Segunda vista del canvas (pestañas **🗨 Diálogo | 🗺 Historia** sobre el lienzo) para estructurar la historia completa como un grafo de quests
+- Cada nodo es un **paso de la historia** ligado a una Quest (la misma quest puede aparecer en dos nodos para rutas alternativas) con su descripción bilingüe
+- **Condiciones sobre las flechas**: cada conexión lleva un texto visible con la condición para que la siguiente quest empiece — clic en la etiqueta (o "＋ condición"), doble clic en el cable, o desde el inspector
+- **Panel "Relacionados"** en el inspector: NPCs y Diálogos vinculados a la quest del nodo (compartidos entre nodos de la misma quest). Clic en un diálogo relacionado salta directo al editor de diálogos
+- Mismas interacciones que el editor de diálogos: drag, zoom, multi-selección, deshacer/rehacer, auto-layout, snap-to-grid
+- Todo el mapa es legible y editable vía MCP (ver abajo)
+
 ### Gestión de Proyecto
 - Gestión de NPCs, Quests y Diálogos desde una barra lateral.
 - Colores personalizados para NPCs para identificación visual en el canvas
@@ -52,11 +60,18 @@ Editor visual de árboles de diálogo construido para desarrollo de videojuegos.
 - El botón 🗑 del chat borra el historial y su memoria vectorial
 
 ### Control externo vía MCP
-La app expone un servidor MCP embebido (`http://127.0.0.1:4747/mcp`) mientras está abierta, para que un Claude Code externo (p. ej. desde el repo del GDD) pueda leer y editar diálogos directamente sobre el canvas en vivo:
+La app expone un servidor MCP embebido (`http://127.0.0.1:4747/mcp`) mientras está abierta, para que un Claude Code externo (p. ej. desde el repo del GDD) pueda leer y editar el proyecto directamente sobre el canvas en vivo:
 
 ```bash
 claude mcp add --transport http --scope user dialogue-forge http://127.0.0.1:4747/mcp
 ```
+
+Cubre el proyecto completo — una IA puede construir una historia entera de punta a punta:
+- **Lectura**: `get_project_summary`, `get_dialogue`, `get_story_map` (estructura de quests con condiciones y relacionados), `validate_dialogue`, `validate_story`
+- **Diálogos**: `write_dialogue_graph` (árbol completo en una llamada), más tools granulares (`add_node`, `connect_nodes`, `update_node`...)
+- **Mapa de historia**: `write_story_map` (grafo completo en una llamada), `add/update/delete_story_node`, `connect/disconnect_story_nodes` (con la condición sobre la flecha), `set_story_start`
+- **Relacionados**: `update_quest_relations` (NPCs y diálogos vinculados a cada quest)
+- Las quests y NPCs referenciados por nombre se crean solos si no existen; todo es deshacible con Ctrl+Z en la app
 
 ### Audio Slicer
 Herramienta integrada para dividir grabaciones de voz en clips de diálogo individuales:
@@ -147,7 +162,7 @@ Los proyectos se guardan como JSON con la siguiente estructura:
 ```json
 {
   "npcs": [{ "id": "...", "name": "Guard", "color": "#6c5ce7", "comment": "Guardia de la puerta norte" }],
-  "quests": [{ "id": "...", "name": "The Lost Sword", "comment": "Quest secundaria del acto 1" }],
+  "quests": [{ "id": "...", "name": "The Lost Sword", "comment": "Quest secundaria del acto 1", "npcIds": ["..."] }],
   "dialogues": [{
     "id": "...",
     "title": "Guard Warning",
@@ -162,6 +177,19 @@ Los proyectos se guardan como JSON con la siguiente estructura:
       "connections": [{ "targetId": "...", "condition": "", "action": "" }]
     }],
     "startNodeId": "..."
-  }]
+  }],
+  "story": {
+    "id": "story",
+    "startNodeId": "...",
+    "nodes": [{
+      "id": "...",
+      "questId": "...",
+      "text": { "es": "El jugador despierta y conoce a Iris...", "en": "" },
+      "x": 100, "y": 200,
+      "connections": [{ "targetId": "...", "label": "Condición para que empiece la siguiente quest" }]
+    }]
+  }
 }
 ```
+
+Los archivos guardados por versiones anteriores (sin `story` ni `npcIds`) cargan sin cambios — los campos nuevos se crean vacíos automáticamente.

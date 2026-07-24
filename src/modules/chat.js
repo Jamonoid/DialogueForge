@@ -108,6 +108,10 @@ function findQuestOrCreate(name) {
 function executeActions(actions) {
   if (!actions || actions.length === 0) return [];
 
+  // Chat actions always target dialogues. If the user is looking at the story
+  // map, switch back so State.addNode()-family calls hit the active dialogue.
+  if (State.getViewMode && State.getViewMode() === 'story') State.setViewMode('dialogue');
+
   const tempIdMap = {}; // temp_id string → real node ID
   const summary = [];
   const pendingDialogueDeletes = []; // destructive — confirmed with the user after the batch

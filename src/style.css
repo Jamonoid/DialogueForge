@@ -243,18 +243,21 @@ body {
   border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  /* One single scrollbar for the whole panel (NPCs + Quests + Diálogos) */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .sidebar-section {
   display: flex;
   flex-direction: column;
   border-bottom: 1px solid var(--border-subtle);
+  flex: 0 0 auto; /* size to content — the sidebar itself scrolls */
 }
 
 .sidebar-section:last-child {
   border-bottom: none;
-  flex: 1;
+  flex: 1 0 auto; /* fill the remaining space when content is short, never compress */
 }
 
 .section-header {
@@ -980,6 +983,144 @@ body {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   z-index: 50;
+}
+
+/* ===== VIEW TABS (Diálogo / Historia) ===== */
+#view-tabs {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+}
+
+.view-tab {
+  padding: 7px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.view-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.view-tab.active {
+  color: var(--text-primary);
+  background: var(--accent-primary);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.view-tab.active[data-view='story'] {
+  background: var(--quest-color);
+  color: #1a1a1a;
+  box-shadow: 0 0 12px rgba(253, 203, 110, 0.35);
+}
+
+/* ===== STORY MAP NODES ===== */
+.dialogue-node.story-node .node-type-badge {
+  background: var(--quest-bg);
+  color: var(--quest-color);
+}
+
+.dialogue-node.story-node .node-type-badge.no-quest {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Connection labels on story map arrows */
+.conn-label {
+  fill: var(--text-secondary);
+  paint-order: stroke;
+  stroke: var(--bg-primary);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
+  pointer-events: all;
+  user-select: none;
+}
+
+.conn-label:hover {
+  fill: var(--text-primary);
+}
+
+/* Placeholder shown on story connections without a condition yet */
+.conn-label.conn-label-empty {
+  fill: var(--text-muted);
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.conn-label.conn-label-empty:hover {
+  fill: var(--accent-primary-hover);
+  opacity: 1;
+}
+
+/* Relacionados (story node inspector) */
+.related-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.related-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--border-medium);
+  border-radius: 20px;
+  background: var(--bg-tertiary);
+}
+
+.related-chip .chip-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 50%;
+  transition: all var(--transition-fast);
+}
+
+.related-chip .chip-remove:hover {
+  color: var(--accent-danger);
+  background: rgba(225, 112, 85, 0.15);
+}
+
+/* Connection label input inside story connection cards */
+.connection-card .conn-label-input {
+  flex-basis: 100%;
+  margin-top: 6px;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+
+.connection-card.story-conn {
+  flex-wrap: wrap;
 }
 
 .canvas-ctrl-btn {
